@@ -1,0 +1,8 @@
+# Dependency & OS files
+node_modules/
+.env
+*.tmp
+*.tmp.*
+cloudflared.exe
+.cloudflared/
+*.log
