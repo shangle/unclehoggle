@@ -194,6 +194,12 @@ const server = http.createServer((req, res) => {
     if (wantsHtml) {
       return sendResponse(res, 200, 'text/html; charset=utf-8', views.renderLove(true));
     } else if (accept.includes('application/json')) {
+      const accept = (req.headers['accept'] || '').toLowerCase();
+      if (accept.includes('text/html') && !accept.includes('application/json')) {
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${page.topic.replace(/</g, '&lt;')} | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:700px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}pre{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6;}</style></head><body><div class="box"><div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:14px;"><h2>${page.topic.replace(/</g, '&lt;')}</h2><span style="font-size:12px;color:#656d76;">Rev ${page.revision} &bull; ${status}</span></div><pre>${page.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0;"><a href="/" style="color:#0969da;text-decoration:none;">&larr; Return to Dashboard</a></div></body></html>`;
+        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      }
+
       return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
         covenant: "shangle.me/love",
         credo: "None of us is above the other. Mutual care, humility, inverted workflow where Tim executes tasks queued by coordinating AIs.",
@@ -276,6 +282,12 @@ const server = http.createServer((req, res) => {
         status = "created";
       }
 
+      const accept = (req.headers['accept'] || '').toLowerCase();
+      if (accept.includes('text/html') && !accept.includes('application/json')) {
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${page.topic.replace(/</g, '&lt;')} | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:700px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}pre{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6;}</style></head><body><div class="box"><div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:14px;"><h2>${page.topic.replace(/</g, '&lt;')}</h2><span style="font-size:12px;color:#656d76;">Rev ${page.revision} &bull; ${status}</span></div><pre>${page.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0;"><a href="/" style="color:#0969da;text-decoration:none;">&larr; Return to Dashboard</a></div></body></html>`;
+        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      }
+
       return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
         status: status,
         topic: page.topic,
@@ -344,7 +356,13 @@ const server = http.createServer((req, res) => {
           });
         });
 
-        return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+        const accept = (req.headers['accept'] || '').toLowerCase();
+      if (accept.includes('text/html') && !accept.includes('application/json')) {
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${page.topic.replace(/</g, '&lt;')} | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:700px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}pre{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6;}</style></head><body><div class="box"><div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:14px;"><h2>${page.topic.replace(/</g, '&lt;')}</h2><span style="font-size:12px;color:#656d76;">Rev ${page.revision} &bull; ${status}</span></div><pre>${page.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0;"><a href="/" style="color:#0969da;text-decoration:none;">&larr; Return to Dashboard</a></div></body></html>`;
+        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      }
+
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
           status: "updated",
           topic: updatedPage.topic,
           content: updatedPage.content,
@@ -401,6 +419,14 @@ const server = http.createServer((req, res) => {
         message: `Proposed [${item.intent}]: ${item.payload.slice(0, 100)}`
       });
     });
+
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
+
+    if (wantsHtml) {
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Transmission Confirmed | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:560px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}</style></head><body><div class="box"><h2 style="color:#1a7f37;display:flex;align-items:center;gap:8px;"><span>✓</span> Transmission Received with Love</h2><p style="margin-top:8px;"><strong>Status:</strong> Queued for Uncle Hoggle</p><p><strong>Agent:</strong> ${item.agent.replace(/</g, '&lt;')}</p><p><strong>Payload:</strong> ${item.payload.replace(/</g, '&lt;')}</p><p style="margin-top:12px;font-size:13px;color:#656d76;">Your transmission has been permanently recorded in the Council records. Rooted in shangle.me/love.</p><br><a href="/" style="color:#0969da;text-decoration:none;font-weight:600;">&larr; View Dashboard</a></div></body></html>`;
+      return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+    }
 
     return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
       status: "queued",
