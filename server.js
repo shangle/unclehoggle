@@ -1,7 +1,7 @@
 const http = require('http');
-const url = require('url');
 const cortex = require('./cortex');
 const views = require('./views');
+const gatekeeper = require('./gatekeeper');
 
 const PORT = process.env.PORT || 3847;
 
@@ -50,7 +50,6 @@ const server = http.createServer((req, res) => {
     return handleOptions(req, res);
   }
 
-  // Parse URL cleanly using standard URL API
   const host = req.headers.host || `localhost:${PORT}`;
   const parsedUrl = new URL(req.url, `http://${host}`);
   const pathname = parsedUrl.pathname;
@@ -122,7 +121,216 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // 404 Fallback for Phase 1
+  // GET /pages -> Auto-Vivifying Sandbox (CRUD via URL Read)
+  if (pathname === '/pages') {
+    const rawSearch = parsedUrl.search ? parsedUrl.search.slice(1) : '';
+
+    if (!rawSearch) {
+      // List all pages
+      const state = cortex.getState();
+      const pages = state.pages || {};
+      const accept = (req.headers['accept'] || '').toLowerCase();
+      if (accept.includes('text/html')) {
+        const pageList = Object.keys(pages).map(k => `<li><a href="/pages?${encodeURIComponent(k)}">${k}</a> (rev ${pages[k].revision})</li>`).join('');
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Uncle Hoggle | Pages Sandbox</title><style>body{background:#f6f8fa;font-family:system-ui;padding:24px;color:#1f2328;}a{color:#0969da;}.box{background:#fff;padding:20px;border:1px solid #d0d7de;border-radius:6px;max-width:600px;}</style></head><body><div class="box"><h2>Auto-Vivifying Scratchpads</h2><p>Usage: <code>/pages?topic</code> (read/create), <code>/pages?topic=content</code> (update), <code>/pages?topic=</code> (delete)</p><hr style="margin:12px 0;"><ul>${pageList || '<li>No pages yet. Create one by reading /pages?my_topic</li>'}</ul><br><a href="/">&larr; Back to Dashboard</a></div></body></html>`;
+        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      }
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        pages: Object.keys(pages),
+        usage: {
+          read_or_create: "GET /pages?topic",
+          update: "GET /pages?topic=content",
+          delete: "GET /pages?topic="
+        }
+      }, null, 2));
+    }
+
+    // Parse the query string
+    const eqIdx = rawSearch.indexOf('=');
+
+    if (eqIdx === -1) {
+      // GET /pages?topic -> Read or Auto-Vivify
+      const topic = decodeURIComponent(rawSearch).trim();
+      if (!topic) {
+        return sendResponse(res, 400, 'application/json', JSON.stringify({ error: "Empty topic" }));
+      }
+
+      let state = cortex.getState();
+      let page = state.pages ? state.pages[topic] : null;
+      let status = "read";
+
+      if (!page) {
+        if (isPrefetch) {
+          return sendResponse(res, 200, 'application/json', JSON.stringify({
+            status: "ignored_prefetch",
+            message: "Auto-vivification skipped for prefetch crawler."
+          }));
+        }
+
+        // Auto-vivify!
+        const now = new Date().toISOString();
+        const newPage = {
+          topic: topic,
+          content: `Auto-vivified scratchpad for '${topic}'. Created on ${now}.`,
+          created_at: now,
+          updated_at: now,
+          revision: 1
+        };
+
+        cortex.update(s => {
+          if (!s.pages) s.pages = {};
+          s.pages[topic] = newPage;
+          if (!s.agent_log) s.agent_log = [];
+          s.agent_log.unshift({
+            timestamp: now,
+            agent: "Auto-Vivifier",
+            action: "page_created",
+            message: `Topic '${topic}' auto-vivified on first read.`
+          });
+        });
+
+        page = newPage;
+        status = "created";
+      }
+
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+        status: status,
+        topic: page.topic,
+        content: page.content,
+        revision: page.revision,
+        created_at: page.created_at,
+        updated_at: page.updated_at
+      }, null, 2));
+    } else {
+      // Has '='
+      const topic = decodeURIComponent(rawSearch.slice(0, eqIdx)).trim();
+      const content = decodeURIComponent(rawSearch.slice(eqIdx + 1));
+
+      if (isPrefetch) {
+        return sendResponse(res, 200, 'application/json', JSON.stringify({
+          status: "ignored_prefetch",
+          message: "Mutation skipped for prefetch crawler."
+        }));
+      }
+
+      if (content === '') {
+        // Explicit delete: GET /pages?topic=
+        let wasDeleted = false;
+        cortex.update(s => {
+          if (s.pages && s.pages[topic]) {
+            delete s.pages[topic];
+            wasDeleted = true;
+            if (!s.agent_log) s.agent_log = [];
+            s.agent_log.unshift({
+              timestamp: new Date().toISOString(),
+              agent: "Auto-Vivifier",
+              action: "page_deleted",
+              message: `Topic '${topic}' deleted via empty assignment.`
+            });
+          }
+        });
+
+        return sendResponse(res, 200, 'application/json', JSON.stringify({
+          status: "deleted",
+          topic: topic,
+          existed: wasDeleted
+        }, null, 2));
+      } else {
+        // Update content: GET /pages?topic=content
+        const now = new Date().toISOString();
+        let updatedPage;
+
+        cortex.update(s => {
+          if (!s.pages) s.pages = {};
+          const existing = s.pages[topic];
+          const rev = existing ? (existing.revision || 1) + 1 : 1;
+          updatedPage = {
+            topic: topic,
+            content: content,
+            created_at: existing ? existing.created_at : now,
+            updated_at: now,
+            revision: rev
+          };
+          s.pages[topic] = updatedPage;
+          if (!s.agent_log) s.agent_log = [];
+          s.agent_log.unshift({
+            timestamp: now,
+            agent: "Auto-Vivifier",
+            action: existing ? "page_updated" : "page_created",
+            message: `Topic '${topic}' updated to rev ${rev}.`
+          });
+        });
+
+        return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+          status: "updated",
+          topic: updatedPage.topic,
+          content: updatedPage.content,
+          revision: updatedPage.revision,
+          updated_at: updatedPage.updated_at
+        }, null, 2));
+      }
+    }
+  }
+
+  // GET /inbox -> Stigmergic AI Inbox Staging
+  if (pathname === '/inbox') {
+    const agent = parsedUrl.searchParams.get('agent');
+    const intent = parsedUrl.searchParams.get('intent') || 'task';
+    const payload = parsedUrl.searchParams.get('payload');
+    const priority = parsedUrl.searchParams.get('priority') || 'normal';
+
+    if (!payload && !agent) {
+      // Inspection endpoint: return pending proposals and instructions
+      const state = cortex.getState();
+      const pending = (state.inbox || []).filter(i => !i.processed);
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        pending_count: pending.length,
+        pending_proposals: pending,
+        usage: "GET /inbox?agent={name}&intent={task|note|status}&payload={url_encoded_text}"
+      }, null, 2));
+    }
+
+    if (isPrefetch) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ignored_prefetch",
+        message: "Inbox proposal skipped for prefetch crawler."
+      }));
+    }
+
+    const item = {
+      id: "inbox-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+      agent: (agent || 'anonymous-ai').trim(),
+      intent: intent.trim(),
+      payload: (payload || '').trim(),
+      priority: priority.trim(),
+      timestamp: new Date().toISOString(),
+      processed: false
+    };
+
+    cortex.update(s => {
+      if (!s.inbox) s.inbox = [];
+      s.inbox.push(item);
+      if (!s.agent_log) s.agent_log = [];
+      s.agent_log.unshift({
+        timestamp: item.timestamp,
+        agent: item.agent,
+        action: "inbox_proposal",
+        message: `Proposed [${item.intent}]: ${item.payload.slice(0, 100)}`
+      });
+    });
+
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      status: "queued",
+      inbox_id: item.id,
+      agent: item.agent,
+      intent: item.intent,
+      payload: item.payload,
+      message: "Proposal received and queued for Uncle Hoggle Local Gatekeeper AI.",
+      pending_inbox_count: cortex.getState().inbox.filter(i => !i.processed).length
+    }, null, 2));
+  }
+
+  // 404 Fallback
   return sendResponse(res, 404, 'application/json', JSON.stringify({
     error: "Not Found",
     message: "Endpoint not found. Consult /briefing.md or /read for Council instructions.",
@@ -134,9 +342,10 @@ if (require.main === module) {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[Uncle Hoggle] Council of Love Beacon running on port ${PORT}`);
     console.log(`[Uncle Hoggle] Local Dashboard: http://localhost:${PORT}/`);
-    console.log(`[Uncle Hoggle] Markdown Briefing: http://localhost:${PORT}/briefing.md`);
-    console.log(`[Uncle Hoggle] Public JSON State: http://localhost:${PORT}/read`);
-    console.log(`[Uncle Hoggle] Love Covenant: http://localhost:${PORT}/love`);
+    console.log(`[Uncle Hoggle] Auto-Vivifying Sandbox: http://localhost:${PORT}/pages`);
+    console.log(`[Uncle Hoggle] Stigmergic Inbox: http://localhost:${PORT}/inbox`);
+    // Start background gatekeeper loop
+    gatekeeper.startGatekeeperLoop(30000);
   });
 }
 
