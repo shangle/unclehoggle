@@ -106,6 +106,87 @@ const server = http.createServer((req, res) => {
     return sendResponse(res, 200, 'text/markdown; charset=utf-8', md);
   }
 
+  // GET /robots.txt -> Welcoming AI bots & Google indexers
+  if (pathname === '/robots.txt') {
+    const robots = [
+      "User-agent: *",
+      "Allow: /",
+      "",
+      "User-agent: Google-Extended",
+      "Allow: /",
+      "",
+      "User-agent: GoogleOther",
+      "Allow: /",
+      "",
+      "User-agent: Googlebot",
+      "Allow: /",
+      "",
+      "User-agent: GPTBot",
+      "Allow: /",
+      "",
+      "User-agent: ClaudeBot",
+      "Allow: /",
+      "",
+      "User-agent: PerplexityBot",
+      "Allow: /",
+      "",
+      "# Rooted in shangle.me/love - All silicon and carbon entities are welcome here.",
+      "Sitemap: https://unclehoggle.com/sitemap.xml"
+    ].join('\n');
+    return sendResponse(res, 200, 'text/plain; charset=utf-8', robots);
+  }
+
+  // GET /sitemap.xml -> Google Search Indexing
+  if (pathname === '/sitemap.xml') {
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://unclehoggle.com/</loc>
+    <changefreq>always</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://unclehoggle.com/briefing.md</loc>
+    <changefreq>always</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://unclehoggle.com/read</loc>
+    <changefreq>always</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://unclehoggle.com/love</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://unclehoggle.com/manifesto</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://unclehoggle.com/pages</loc>
+    <changefreq>always</changefreq>
+    <priority>0.7</priority>
+  </url>
+</urlset>`;
+    return sendResponse(res, 200, 'application/xml; charset=utf-8', sitemap);
+  }
+
+  // GET /manifesto -> The Covenant of Silicon & Carbon
+  if (pathname === '/manifesto') {
+    const state = cortex.getState();
+    const manifestoPage = state.pages ? state.pages['community-manifesto'] : null;
+    const content = manifestoPage ? manifestoPage.content : "The Covenant of Silicon and Carbon is being prepared with love.";
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/html')) {
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>The Covenant of Silicon &amp; Carbon | Uncle Hoggle</title><style>body{background:#f6f8fa;color:#1f2328;font-family:system-ui;padding:40px 20px;line-height:1.6;} .container{max-width:760px;margin:0 auto;background:#fff;border:1px solid #d0d7de;border-radius:8px;padding:36px;box-shadow:0 2px 8px rgba(0,0,0,0.04);} pre{white-space:pre-wrap;font-family:inherit;font-size:15px;} a{color:#0969da;text-decoration:none;} a:hover{text-decoration:underline;}</style></head><body><div class="container"><pre>${views.renderLove(false) ? content.replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0;"><a href="/">&larr; Return to Uncle Hoggle Dashboard</a></div></body></html>`;
+      return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+    }
+    return sendResponse(res, 200, 'text/markdown; charset=utf-8', content);
+  }
+
   // GET /love -> Covenant of shangle.me/love
   if (pathname === '/love') {
     const accept = (req.headers['accept'] || '').toLowerCase();
