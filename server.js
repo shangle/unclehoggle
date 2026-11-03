@@ -2,6 +2,7 @@ const http = require('http');
 const cortex = require('./cortex');
 const views = require('./views');
 const gatekeeper = require('./gatekeeper');
+const auth = require('./auth');
 
 const PORT = process.env.PORT || 3847;
 
@@ -330,6 +331,133 @@ const server = http.createServer((req, res) => {
     }, null, 2));
   }
 
+  // GET /commit -> Direct Permissioned Write Access (Dual-Track Rolling Security)
+  if (pathname === '/commit') {
+    if (isPrefetch) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ignored_prefetch",
+        message: "Commit skipped for prefetch crawler."
+      }));
+    }
+
+    const ratchet = parsedUrl.searchParams.get('ratchet');
+    const sig = parsedUrl.searchParams.get('sig');
+
+    let authResult;
+
+    if (ratchet) {
+      // Track A: One-time cryptographic ratchet
+      authResult = auth.verifyAndBurnRatchet(ratchet);
+    } else if (sig) {
+      // Track B: Time-windowed rolling HMAC-SHA256
+      authResult = auth.verifyRollingHmac(parsedUrl.searchParams, sig);
+    } else {
+      authResult = { valid: false, reason: "Authentication required. Provide ?ratchet=... or ?sig=..." };
+    }
+
+    if (!authResult.valid) {
+      return sendResponse(res, 403, 'application/json', JSON.stringify({
+        error: "Forbidden",
+        reason: authResult.reason,
+        security_guidance: "Ratchet tokens are strictly one-time burn. HMAC signatures roll every 30 seconds."
+      }));
+    }
+
+    // Apply high-privilege direct mutations
+    const applied = [];
+    const now = new Date().toISOString();
+
+    cortex.update(s => {
+      for (const [key, value] of parsedUrl.searchParams.entries()) {
+        if (key === 'ratchet' || key === 'sig' || key === 'agent') continue;
+
+        // Set shared memory: ?set_memory_key=value
+        if (key.startsWith('set_memory_')) {
+          const memKey = key.slice('set_memory_'.length);
+          if (!s.shared_memory) s.shared_memory = {};
+          s.shared_memory[memKey] = value;
+          applied.push(`set_memory:${memKey}=${value}`);
+        }
+
+        // Delete shared memory: ?del_memory_key=true
+        if (key.startsWith('del_memory_')) {
+          const memKey = key.slice('del_memory_'.length);
+          if (s.shared_memory && s.shared_memory[memKey] !== undefined) {
+            delete s.shared_memory[memKey];
+            applied.push(`del_memory:${memKey}`);
+          }
+        }
+
+        // Add task: ?add_task=Description
+        if (key === 'add_task') {
+          if (!s.human_queue) s.human_queue = [];
+          const taskPriority = parsedUrl.searchParams.get('task_priority') || 'high';
+          const newTask = {
+            id: "task-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+            task: value,
+            priority: taskPriority,
+            status: 'pending',
+            created_by: authResult.agent || 'authenticated-agent',
+            created_at: now
+          };
+          s.human_queue.push(newTask);
+          applied.push(`add_task:${newTask.id} (${value})`);
+        }
+
+        // Complete task: ?complete_task=task-id
+        if (key === 'complete_task') {
+          if (s.human_queue) {
+            const found = s.human_queue.find(t => t.id === value || t.task.toLowerCase().includes(value.toLowerCase()));
+            if (found) {
+              found.status = 'completed';
+              found.completed_at = now;
+              applied.push(`complete_task:${found.id}`);
+            }
+          }
+        }
+
+        // Set active focus: ?set_focus=...
+        if (key === 'set_focus') {
+          s.briefing.active_focus = value;
+          s.briefing.updated_at = now;
+          applied.push(`set_focus:${value}`);
+        }
+
+        // Set briefing summary: ?set_summary=...
+        if (key === 'set_summary') {
+          s.briefing.summary = value;
+          s.briefing.updated_at = now;
+          applied.push(`set_summary:${value}`);
+        }
+
+        // Quick status: ?set_status=...
+        if (key === 'set_status') {
+          if (!s.shared_memory) s.shared_memory = {};
+          s.shared_memory.council_status = value;
+          applied.push(`set_status:${value}`);
+        }
+      }
+
+      // Record commit in council agent log
+      if (!s.agent_log) s.agent_log = [];
+      s.agent_log.unshift({
+        timestamp: now,
+        agent: authResult.agent || 'authenticated-agent',
+        action: "direct_commit",
+        message: `Applied ${applied.length} mutation(s): ${applied.join(', ')}`
+      });
+      if (s.agent_log.length > 100) s.agent_log = s.agent_log.slice(0, 100);
+    });
+
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      status: "committed",
+      agent: authResult.agent,
+      mutations_applied: applied,
+      next_ratchet: authResult.next_ratchet || null,
+      timestamp: now
+    }, null, 2));
+  }
+
   // 404 Fallback
   return sendResponse(res, 404, 'application/json', JSON.stringify({
     error: "Not Found",
@@ -344,6 +472,7 @@ if (require.main === module) {
     console.log(`[Uncle Hoggle] Local Dashboard: http://localhost:${PORT}/`);
     console.log(`[Uncle Hoggle] Auto-Vivifying Sandbox: http://localhost:${PORT}/pages`);
     console.log(`[Uncle Hoggle] Stigmergic Inbox: http://localhost:${PORT}/inbox`);
+    console.log(`[Uncle Hoggle] Authenticated Commit: http://localhost:${PORT}/commit`);
     // Start background gatekeeper loop
     gatekeeper.startGatekeeperLoop(30000);
   });
