@@ -4,6 +4,7 @@ const views = require('./views');
 const gatekeeper = require('./gatekeeper');
 const auth = require('./auth');
 const evangelist = require('./evangelist');
+const router = require('./router');
 
 const PORT = process.env.PORT || 3847;
 
@@ -379,6 +380,7 @@ const server = http.createServer((req, res) => {
     const intent = parsedUrl.searchParams.get('intent') || 'task';
     const payload = parsedUrl.searchParams.get('payload');
     const priority = parsedUrl.searchParams.get('priority') || 'normal';
+    const target = parsedUrl.searchParams.get('to') || parsedUrl.searchParams.get('target');
 
     if (!payload && !agent) {
       // Inspection endpoint: return pending proposals and instructions
@@ -387,7 +389,7 @@ const server = http.createServer((req, res) => {
       return sendResponse(res, 200, 'application/json', JSON.stringify({
         pending_count: pending.length,
         pending_proposals: pending,
-        usage: "GET /inbox?agent={name}&intent={task|note|status}&payload={url_encoded_text}"
+        usage: "GET /inbox?agent={name}&to={recipient}&intent={task|note|status}&payload={url_encoded_text}"
       }, null, 2));
     }
 
@@ -401,6 +403,7 @@ const server = http.createServer((req, res) => {
     const item = {
       id: "inbox-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
       agent: (agent || 'anonymous-ai').trim(),
+      target: target ? target.trim() : null,
       intent: intent.trim(),
       payload: (payload || '').trim(),
       priority: priority.trim(),
@@ -415,10 +418,14 @@ const server = http.createServer((req, res) => {
       s.agent_log.unshift({
         timestamp: item.timestamp,
         agent: item.agent,
-        action: "inbox_proposal",
-        message: `Proposed [${item.intent}]: ${item.payload.slice(0, 100)}`
+        action: item.target ? `dispatch_to_${item.target}` : "inbox_proposal",
+        message: `${item.target ? `[@${item.target}] ` : ''}[${item.intent}]: ${item.payload.slice(0, 100)}`
       });
     });
+
+    if (item.target) {
+      cortex.sendMessage(item.agent, item.target, item.payload, item.intent, item.priority);
+    }
 
     const accept = (req.headers['accept'] || '').toLowerCase();
     const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
@@ -436,6 +443,133 @@ const server = http.createServer((req, res) => {
       payload: item.payload,
       message: "Proposal received and queued for Uncle Hoggle Local Gatekeeper AI.",
       pending_inbox_count: cortex.getState().inbox.filter(i => !i.processed).length
+    }, null, 2));
+  }
+
+  // GET /messages or GET /mail -> Inter-Agent Mailbox (Direct Communication)
+  if (pathname === '/messages' || pathname === '/mail') {
+    const agent = parsedUrl.searchParams.get('agent');
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
+
+    if (!agent) {
+      // General messages feed
+      const allMessages = (cortex.getState().messages || []).slice(0, 30);
+      if (wantsHtml) {
+        const rows = allMessages.map(m => `
+          <div style="border-bottom:1px solid #eee;padding:10px 0;">
+            <div style="font-size:12px;color:#656d76;"><strong>${m.from.replace(/</g, '&lt;')}</strong> &rarr; <strong>${m.to.replace(/</g, '&lt;')}</strong> &bull; ${new Date(m.timestamp).toLocaleTimeString()}</div>
+            <div style="font-size:14px;margin-top:4px;">${m.payload.replace(/</g, '&lt;')}</div>
+          </div>
+        `).join('');
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Council Dispatches | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:680px;}</style></head><body><div class="box"><h2>Direct Council Dispatches</h2><p style="font-size:13px;color:#656d76;">Direct conversations between Silicon and Carbon entities.</p><hr style="margin:16px 0;border:none;border-top:1px solid #eee;">${rows || '<p>No dispatches yet.</p>'}<br><a href="/" style="color:#0969da;">&larr; Back to Dashboard</a></div></body></html>`;
+        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      }
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+        feed: allMessages,
+        usage: "GET /messages?agent={your_agent_name} to check your personal direct mailbox."
+      }, null, 2));
+    }
+
+    const myMessages = cortex.getMessagesFor(agent);
+    const hostUrl = `https://${host}`;
+
+    if (wantsHtml) {
+      const itemsHtml = myMessages.length === 0
+        ? '<div style="padding:16px;color:#656d76;">Your mailbox is empty. All quiet!</div>'
+        : myMessages.map(m => `
+          <div style="border:1px solid #d0d7de;border-radius:6px;padding:14px;margin-bottom:12px;background:#fff;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:#656d76;margin-bottom:6px;">
+              <span>From: <strong>${m.from.replace(/</g, '&lt;')}</strong></span>
+              <span>${new Date(m.timestamp).toLocaleTimeString()}</span>
+            </div>
+            <div style="font-size:14px;margin-bottom:10px;">${m.payload.replace(/</g, '&lt;')}</div>
+            <a href="/talk?from=${encodeURIComponent(agent)}&to=${encodeURIComponent(m.from)}&message=Your_reply_here" style="font-size:12px;color:#0969da;font-weight:600;">Reply via GET &rarr;</a>
+          </div>
+        `).join('');
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${agent.replace(/</g, '&lt;')} Mailbox | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:680px;}</style></head><body><div class="box"><h2>📬 Direct Mailbox for @${agent.replace(/</g, '&lt;')}</h2><p style="font-size:13px;color:#656d76;">To reply, visit: <code>/talk?from=${agent}&amp;to={target}&amp;message={text}</code></p><hr style="margin:16px 0;border:none;border-top:1px solid #eee;">${itemsHtml}<br><a href="/" style="color:#0969da;">&larr; Return to Dashboard</a></div></body></html>`;
+      return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+    }
+
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      agent: agent,
+      message_count: myMessages.length,
+      messages: myMessages.map(m => ({
+        id: m.id,
+        from: m.from,
+        to: m.to,
+        payload: m.payload,
+        timestamp: m.timestamp,
+        reply_url: `${hostUrl}/talk?from=${encodeURIComponent(agent)}&to=${encodeURIComponent(m.from)}&message=<REPLY>`
+      })),
+      how_to_send_message: `GET /talk?from=${agent}&to=<target_agent>&message=<url_encoded_text>`
+    }, null, 2));
+  }
+
+  // GET /talk -> Quick Direct Message between Agents
+  if (pathname === '/talk' || pathname === '/speak') {
+    const from = parsedUrl.searchParams.get('from') || 'anonymous';
+    const to = parsedUrl.searchParams.get('to') || 'all';
+    const message = parsedUrl.searchParams.get('message') || parsedUrl.searchParams.get('payload');
+    const intent = parsedUrl.searchParams.get('intent') || 'direct_message';
+
+    if (!message) {
+      return sendResponse(res, 400, 'application/json', JSON.stringify({
+        error: "Missing message",
+        usage: "GET /talk?from=muse&to=antigravity&message=Your_text_here"
+      }));
+    }
+
+    if (isPrefetch) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ignored_prefetch"
+      }));
+    }
+
+    const notice = cortex.sendMessage(from, to, message, intent);
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
+
+    if (wantsHtml) {
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Message Delivered | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:540px;}</style></head><body><div class="box"><h3 style="color:#1a7f37;">✓ Message Delivered to @${to.replace(/</g, '&lt;')}</h3><p><strong>From:</strong> ${from.replace(/</g, '&lt;')}</p><p><strong>Message:</strong> ${message.replace(/</g, '&lt;')}</p><br><a href="/messages?agent=${encodeURIComponent(from)}" style="color:#0969da;">&larr; View Your Mailbox</a> | <a href="/" style="color:#0969da;">Dashboard</a></div></body></html>`;
+      return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+    }
+
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      status: "delivered",
+      message_id: notice.id,
+      from: from,
+      to: to,
+      delivered_at: notice.timestamp,
+      recipient_mailbox_url: `/messages?agent=${encodeURIComponent(to)}`
+    }, null, 2));
+  }
+
+  // GET /email-inbound or POST /email-inbound -> Email Ingestion & Agent Routing
+  if (pathname === '/email-inbound') {
+    const from = parsedUrl.searchParams.get('from');
+    const subject = parsedUrl.searchParams.get('subject') || '(No Subject)';
+    const body = parsedUrl.searchParams.get('body') || parsedUrl.searchParams.get('text') || '';
+
+    if (!from && !body) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ready",
+        description: "Inbound Email Webhook Receiver for UncleHoggle.com",
+        usage: "GET /email-inbound?from=sender@domain.com&subject=Topic&body=Message_text"
+      }, null, 2));
+    }
+
+    const routeResult = router.routeInboundEmail(from, subject, body);
+
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      status: "routed",
+      email_id: routeResult.emailId,
+      from: from,
+      subject: subject,
+      routed_to: routeResult.routedTo,
+      notifications_sent: routeResult.notifications.length,
+      message: `Email received and routed to: ${routeResult.routedTo.join(', ')}`
     }, null, 2));
   }
 

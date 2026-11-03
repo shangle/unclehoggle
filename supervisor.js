@@ -80,9 +80,13 @@ function startTunnel() {
   }
 
   let tunnelArgs;
+  const configPath = path.join(__dirname, 'config.yml');
   if (TUNNEL_TOKEN) {
     log("Starting Cloudflare Named Tunnel using configured token...");
     tunnelArgs = ['tunnel', 'run', '--token', TUNNEL_TOKEN];
+  } else if (fs.existsSync(configPath)) {
+    log("Starting Cloudflare Named Tunnel for UncleHoggle.com using config.yml...");
+    tunnelArgs = ['tunnel', '--config', configPath, 'run'];
   } else {
     log(`Starting Cloudflare Quick Tunnel forwarding to http://127.0.0.1:${PORT}...`);
     tunnelArgs = ['tunnel', '--url', `http://127.0.0.1:${PORT}`];
@@ -95,11 +99,13 @@ function startTunnel() {
 
   tunnelProcess.stdout.on('data', data => {
     const text = data.toString();
+    log(`[Tunnel] ${text.trim()}`);
     parseTunnelOutput(text);
   });
 
   tunnelProcess.stderr.on('data', data => {
     const text = data.toString();
+    log(`[Tunnel] ${text.trim()}`);
     parseTunnelOutput(text);
   });
 

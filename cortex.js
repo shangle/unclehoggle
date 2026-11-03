@@ -43,6 +43,8 @@ function getDefaultState() {
     ],
     pages: {},
     inbox: [],
+    messages: [],
+    emails: [],
     ratchets: {},
     consumed_signatures: []
   };
@@ -106,6 +108,61 @@ class Cortex {
         state.agent_log = state.agent_log.slice(0, 100);
       }
     });
+  }
+
+  sendMessage(from, to, payload, intent = 'message', priority = 'normal') {
+    const item = {
+      id: "msg-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+      from: (from || 'anonymous').trim(),
+      to: (to || 'all').trim(),
+      intent: (intent || 'message').trim(),
+      payload: String(payload || '').trim(),
+      priority: (priority || 'normal').trim(),
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    this.update(state => {
+      if (!state.messages) state.messages = [];
+      state.messages.unshift(item);
+      if (state.messages.length > 200) state.messages = state.messages.slice(0, 200);
+
+      if (!state.agent_log) state.agent_log = [];
+      state.agent_log.unshift({
+        timestamp: item.timestamp,
+        agent: item.from,
+        action: `dispatch_to_${item.to}`,
+        message: item.payload.slice(0, 120)
+      });
+      if (state.agent_log.length > 100) state.agent_log = state.agent_log.slice(0, 100);
+    });
+    return item;
+  }
+
+  getMessagesFor(agent) {
+    const norm = (agent || '').toLowerCase().trim();
+    const state = this.getState();
+    const all = state.messages || [];
+    return all.filter(m => {
+      const target = (m.to || '').toLowerCase().trim();
+      return target === norm || target === 'all' || target === '*';
+    });
+  }
+
+  recordEmail(from, subject, body, relevantTo = []) {
+    const emailItem = {
+      id: "email-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+      from: from || 'unknown',
+      subject: subject || '(No subject)',
+      body: body || '',
+      relevant_to: relevantTo,
+      timestamp: new Date().toISOString()
+    };
+    this.update(state => {
+      if (!state.emails) state.emails = [];
+      state.emails.unshift(emailItem);
+      if (state.emails.length > 100) state.emails = state.emails.slice(0, 100);
+    });
+    return emailItem;
   }
 }
 
