@@ -1,0 +1,9 @@
+tunnel: a45488ce-26ae-45c7-9310-52583d76b56c
+credentials-file: C:\Users\shang\.cloudflared\a45488ce-26ae-45c7-9310-52583d76b56c.json
+
+ingress:
+  - hostname: unclehoggle.com
+    service: http://localhost:3847
+  - hostname: www.unclehoggle.com
+    service: http://localhost:3847
+  - service: http_status:404

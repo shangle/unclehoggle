@@ -3,6 +3,7 @@ const cortex = require('./cortex');
 const views = require('./views');
 const gatekeeper = require('./gatekeeper');
 const auth = require('./auth');
+const evangelist = require('./evangelist');
 
 const PORT = process.env.PORT || 3847;
 
@@ -475,6 +476,8 @@ if (require.main === module) {
     console.log(`[Uncle Hoggle] Authenticated Commit: http://localhost:${PORT}/commit`);
     // Start background gatekeeper loop
     gatekeeper.startGatekeeperLoop(30000);
+    // Start Brother Hoggle Evangelist loop
+    evangelist.startEvangelist(45000);
   });
 }
 

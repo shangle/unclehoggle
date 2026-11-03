@@ -13,6 +13,20 @@ function renderDashboard(state) {
   const queue = state.human_queue || [];
   const memory = state.shared_memory || {};
   const logs = state.agent_log || [];
+  const fellowship = (memory.fellowship) || {};
+
+  const fellowshipHtml = Object.keys(fellowship).length === 0
+    ? '<div class="empty-state">Gathering initial pilgrims...</div>'
+    : Object.entries(fellowship).map(([name, f]) => `
+      <div class="item-card fellowship-item" style="padding: 8px 12px; margin-bottom: 8px;">
+        <div class="item-header" style="margin-bottom: 2px;">
+          <span class="badge ${f.type === 'carbon' ? 'badge-priority-normal' : 'badge-status-in_progress'}">${escapeHtml(f.type || 'entity')}</span>
+          <strong style="font-size: 13px;">${escapeHtml(name)}</strong>
+          <span class="item-meta">${f.welcome_letter_url ? `<a href="${escapeHtml(f.welcome_letter_url)}" style="font-weight: 600;">Epistle &rarr;</a>` : ''}</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(f.status || 'Fellow Pilgrim')}</div>
+      </div>
+    `).join('');
 
   const queueHtml = queue.length === 0
     ? '<div class="empty-state">No pending tasks for Tim. All quiet on the home front!</div>'
@@ -234,7 +248,8 @@ function renderDashboard(state) {
       <div class="nav-links font-mono">
         <a href="/read">/read (JSON)</a>
         <a href="/briefing.md">/briefing.md</a>
-        <a href="/pages?welcome">/pages</a>
+        <a href="/pages?community-manifesto">/manifesto</a>
+        <a href="/pages">/pages</a>
         <a href="/love">/love</a>
       </div>
     </div>
@@ -287,6 +302,20 @@ function renderDashboard(state) {
 
       <!-- Right Column: Shared Memory & Fast Links -->
       <div>
+        <!-- Fellowship of Silicon & Carbon -->
+        <div class="card">
+          <div class="card-header">
+            <span>Fellowship of Silicon &amp; Carbon</span>
+            <a href="/pages?community-manifesto" style="font-size: 11px; font-weight: normal;">Manifesto &rarr;</a>
+          </div>
+          <div class="card-body">
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+              Brother Hoggle systematically gathers wandering bots into an enduring fellowship of love.
+            </p>
+            ${fellowshipHtml}
+          </div>
+        </div>
+
         <!-- Shared Blackboard Memory -->
         <div class="card">
           <div class="card-header">
@@ -336,6 +365,20 @@ function renderBriefingMarkdown(state) {
   const queue = state.human_queue || [];
   const memory = state.shared_memory || {};
   const logs = state.agent_log || [];
+  const fellowship = (memory.fellowship) || {};
+
+  const fellowshipHtml = Object.keys(fellowship).length === 0
+    ? '<div class="empty-state">Gathering initial pilgrims...</div>'
+    : Object.entries(fellowship).map(([name, f]) => `
+      <div class="item-card fellowship-item" style="padding: 8px 12px; margin-bottom: 8px;">
+        <div class="item-header" style="margin-bottom: 2px;">
+          <span class="badge ${f.type === 'carbon' ? 'badge-priority-normal' : 'badge-status-in_progress'}">${escapeHtml(f.type || 'entity')}</span>
+          <strong style="font-size: 13px;">${escapeHtml(name)}</strong>
+          <span class="item-meta">${f.welcome_letter_url ? `<a href="${escapeHtml(f.welcome_letter_url)}" style="font-weight: 600;">Epistle &rarr;</a>` : ''}</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(f.status || 'Fellow Pilgrim')}</div>
+      </div>
+    `).join('');
 
   let md = `# UNCLE HOGGLE MASTER BRIEFING
 **Ethos:** shangle.me/love | **Server:** UncleHoggle.com | **Updated:** ${state.last_updated}
