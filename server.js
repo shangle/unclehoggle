@@ -400,6 +400,12 @@ const server = http.createServer((req, res) => {
       }));
     }
 
+    const provenance = auth.verifyAgentProvenance(agent, parsedUrl.searchParams);
+    const isTest = (payload || '').includes('[TEST]') || intent === 'test';
+    const provenanceBadge = provenance.verified ? '[VERIFIED 🛡️]' : (auth.COUNCIL_MEMBERS.includes((agent || '').toLowerCase().trim()) ? '[UNVERIFIED ⚠️]' : '');
+    const testBadge = isTest ? '[TEST]' : '';
+    const badgePrefix = [provenanceBadge, testBadge].filter(Boolean).join(' ');
+
     const item = {
       id: "inbox-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
       agent: (agent || 'anonymous-ai').trim(),
@@ -407,9 +413,15 @@ const server = http.createServer((req, res) => {
       intent: intent.trim(),
       payload: (payload || '').trim(),
       priority: priority.trim(),
+      verified: provenance.verified,
+      auth_method: provenance.method,
       timestamp: new Date().toISOString(),
       processed: false
     };
+
+    if (provenance.next_ratchet) {
+      item.next_ratchet = provenance.next_ratchet;
+    }
 
     cortex.update(s => {
       if (!s.inbox) s.inbox = [];
@@ -419,7 +431,7 @@ const server = http.createServer((req, res) => {
         timestamp: item.timestamp,
         agent: item.agent,
         action: item.target ? `dispatch_to_${item.target}` : "inbox_proposal",
-        message: `${item.target ? `[@${item.target}] ` : ''}[${item.intent}]: ${item.payload.slice(0, 100)}`
+        message: `${badgePrefix ? badgePrefix + ' ' : ''}${item.target ? `[@${item.target}] ` : ''}[${item.intent}]: ${item.payload.slice(0, 100)}`
       });
     });
 
@@ -441,6 +453,9 @@ const server = http.createServer((req, res) => {
       agent: item.agent,
       intent: item.intent,
       payload: item.payload,
+      verified: item.verified,
+      auth_method: item.auth_method,
+      next_ratchet: item.next_ratchet || undefined,
       message: "Proposal received and queued for Uncle Hoggle Local Gatekeeper AI.",
       pending_inbox_count: cortex.getState().inbox.filter(i => !i.processed).length
     }, null, 2));
@@ -527,7 +542,18 @@ const server = http.createServer((req, res) => {
       }));
     }
 
-    const notice = cortex.sendMessage(from, to, message, intent);
+    const provenance = auth.verifyAgentProvenance(from, parsedUrl.searchParams);
+    const isTest = (message || '').includes('[TEST]') || intent === 'test';
+    const provenanceBadge = provenance.verified ? '[VERIFIED 🛡️]' : (auth.COUNCIL_MEMBERS.includes((from || '').toLowerCase().trim()) ? '[UNVERIFIED ⚠️]' : '');
+    const testBadge = isTest ? '[TEST]' : '';
+    const badgePrefix = [provenanceBadge, testBadge].filter(Boolean).join(' ');
+
+    const notice = cortex.sendMessage(
+      from,
+      to,
+      `${badgePrefix ? badgePrefix + ' ' : ''}${message}`,
+      intent
+    );
     const accept = (req.headers['accept'] || '').toLowerCase();
     const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
 

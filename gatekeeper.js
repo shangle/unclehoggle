@@ -1,5 +1,6 @@
 const http = require('http');
 const cortex = require('./cortex');
+const auth = require('./auth');
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || '127.0.0.1';
 const OLLAMA_PORT = process.env.OLLAMA_PORT || 11434;
@@ -95,12 +96,15 @@ function deterministicFallback(pending, state) {
     const norm = item.payload.toLowerCase().trim();
     const isDuplicate = existingTasks.some(t => t === norm || t.includes(norm) || norm.includes(t));
     if (!isDuplicate && (item.intent === 'task' || item.intent === 'action')) {
+      const isMember = auth.COUNCIL_MEMBERS.includes((item.agent || '').toLowerCase().trim());
+      const authorTag = item.verified ? `${item.agent} [VERIFIED 🛡️]` : (isMember ? `${item.agent} [UNVERIFIED ⚠️]` : item.agent);
+
       newTasks.push({
         id: "task-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
         task: item.payload,
         priority: item.priority || 'normal',
         status: 'pending',
-        created_by: item.agent,
+        created_by: authorTag,
         created_at: new Date().toISOString()
       });
       existingTasks.push(norm);

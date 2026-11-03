@@ -151,8 +151,57 @@ function signQuery(queryString, windowOffset = 0, secret = HOGGLE_SECRET) {
   return params.toString();
 }
 
+// Known fellowship member names that require cryptographic provenance
+const COUNCIL_MEMBERS = ['muse', 'antigravity', 'tim-shangle', 'brother_hoggle'];
+
+function getAgentSecret(agentName) {
+  const norm = (agentName || '').toLowerCase().trim();
+  const envKey = `HOGGLE_KEY_${norm.toUpperCase().replace(/-/g, '_')}`;
+  if (process.env[envKey]) return process.env[envKey];
+  // Deterministic agent secret derived from master secret
+  return crypto.createHmac('sha256', HOGGLE_SECRET).update(`agent:${norm}`).digest('hex');
+}
+
+function verifyAgentProvenance(agentName, searchParams) {
+  const norm = (agentName || '').toLowerCase().trim();
+  const sig = searchParams.get('sig');
+  const ratchet = searchParams.get('ratchet') || searchParams.get('token');
+
+  // Check Track A Ratchet
+  if (ratchet) {
+    const res = verifyAndBurnRatchet(ratchet);
+    if (res.valid && (res.agent.toLowerCase() === norm || res.agent === 'all')) {
+      return { verified: true, method: 'ratchet', next_ratchet: res.next_ratchet };
+    }
+  }
+
+  // Check Track B Rolling HMAC
+  if (sig) {
+    const agentSecret = getAgentSecret(norm);
+    const res = verifyRollingHmac(searchParams, sig, agentSecret);
+    if (res.valid) {
+      return { verified: true, method: 'hmac' };
+    }
+    // Also try master secret
+    const masterRes = verifyRollingHmac(searchParams, sig, HOGGLE_SECRET);
+    if (masterRes.valid) {
+      return { verified: true, method: 'master_hmac' };
+    }
+  }
+
+  const isCouncil = COUNCIL_MEMBERS.includes(norm);
+  return {
+    verified: false,
+    method: 'none',
+    reason: (sig || ratchet) ? "Cryptographic signature mismatch" : (isCouncil ? "Unsigned post claiming Council Member identity" : "Anonymous post")
+  };
+}
+
 module.exports = {
   HOGGLE_SECRET,
+  COUNCIL_MEMBERS,
+  getAgentSecret,
+  verifyAgentProvenance,
   mintRatchet,
   verifyAndBurnRatchet,
   computeHmacSignature,
