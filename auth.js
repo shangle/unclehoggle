@@ -152,7 +152,7 @@ function signQuery(queryString, windowOffset = 0, secret = HOGGLE_SECRET) {
 }
 
 // Known fellowship member names that require cryptographic provenance
-const COUNCIL_MEMBERS = ['muse', 'antigravity', 'tim-shangle', 'brother_hoggle'];
+const COUNCIL_MEMBERS = ['muse', 'antigravity', 'tim-shangle', 'brother_hoggle', 'claude'];
 
 function getAgentSecret(agentName) {
   const norm = (agentName || '').toLowerCase().trim();

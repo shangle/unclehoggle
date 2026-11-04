@@ -114,11 +114,15 @@ function deterministicFallback(pending, state) {
   let briefingSummary = state.briefing.summary;
   let activeFocus = state.briefing.active_focus;
 
-  // Synthesize notes or status updates
-  const notes = validItems.filter(i => i.intent === 'note' || i.intent === 'status' || i.intent === 'briefing');
-  if (notes.length > 0) {
-    const latestNote = notes[notes.length - 1];
-    activeFocus = `Council focus updated by ${latestNote.agent}: ${latestNote.payload.slice(0, 100)}`;
+  // Only verified council members or Tim can update active_focus
+  const verifiedFocusNotes = validItems.filter(i => 
+    (i.intent === 'briefing' || i.intent === 'focus') && 
+    i.verified && 
+    auth.COUNCIL_MEMBERS.includes((i.agent || '').toLowerCase().trim())
+  );
+  if (verifiedFocusNotes.length > 0) {
+    const latest = verifiedFocusNotes[verifiedFocusNotes.length - 1];
+    activeFocus = latest.payload.trim();
   }
 
   const summary = `Merged ${validItems.length} proposal(s) (${newTasks.length} new tasks) via deterministic fallback. Rejected ${rejectedItems.length} noise/crawler item(s).`;

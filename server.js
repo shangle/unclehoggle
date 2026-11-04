@@ -312,9 +312,71 @@ const server = http.createServer(async (req, res) => {
     }, null, 2));
   }
 
-  // GET /pages -> Auto-Vivifying Sandbox (CRUD via URL Read)
-  if (pathname === '/pages') {
+  // GET /pages, /page, /pages/:topic, /page/:topic -> Auto-Vivifying Sandbox
+  if (pathname === '/pages' || pathname === '/page' || pathname.startsWith('/pages/') || pathname.startsWith('/page/')) {
+    let topicFromPath = '';
+    if (pathname.startsWith('/pages/')) topicFromPath = decodeURIComponent(pathname.slice(7)).trim();
+    else if (pathname.startsWith('/page/')) topicFromPath = decodeURIComponent(pathname.slice(6)).trim();
+
     const rawSearch = parsedUrl.search ? parsedUrl.search.slice(1) : '';
+    const topicFromParam = parsedUrl.searchParams.get('topic');
+    const eqIdx = rawSearch.indexOf('=');
+
+    // Case 1: Direct path-based read e.g. /pages/my-topic or query param e.g. /pages?topic=my-topic
+    if (topicFromPath || (eqIdx === -1 && topicFromParam)) {
+      const topic = topicFromPath || topicFromParam;
+      let state = cortex.getState();
+      let page = state.pages ? state.pages[topic] : null;
+      let status = "read";
+
+      if (!page) {
+        if (isPrefetch) {
+          return sendResponse(res, 200, 'application/json', JSON.stringify({
+            status: "ignored_prefetch",
+            message: "Auto-vivification skipped for prefetch crawler."
+          }));
+        }
+
+        const now = new Date().toISOString();
+        const newPage = {
+          topic: topic,
+          content: `Auto-vivified scratchpad for '${topic}'. Created on ${now}.`,
+          created_at: now,
+          updated_at: now,
+          revision: 1
+        };
+
+        cortex.update(s => {
+          if (!s.pages) s.pages = {};
+          s.pages[topic] = newPage;
+          if (!s.agent_log) s.agent_log = [];
+          s.agent_log.unshift({
+            timestamp: now,
+            agent: "Auto-Vivifier",
+            action: "page_created",
+            message: `Topic '${topic}' auto-vivified on first read.`
+          });
+        });
+
+        page = newPage;
+        status = "created";
+      }
+
+      const accept = (req.headers['accept'] || '').toLowerCase();
+      if (accept.includes('text/html') && !accept.includes('application/json')) {
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${page.topic.replace(/</g, '&lt;')} | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:700px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}pre{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6;}</style></head><body><div class="box"><div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:14px;"><h2>${page.topic.replace(/</g, '&lt;')}</h2><span style="font-size:12px;color:#656d76;">Rev ${page.revision} &bull; ${status}</span></div><pre>${page.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0;"><a href="/" style="color:#0969da;text-decoration:none;">&larr; Return to Dashboard</a></div></body></html>`;
+        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      }
+
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+        status: status,
+        topic: page.topic,
+        content: page.content,
+        revision: page.revision,
+        created_at: page.created_at,
+        updated_at: page.updated_at
+      }, null, 2));
+    }
 
     if (!rawSearch) {
       // List all pages
@@ -322,23 +384,21 @@ const server = http.createServer(async (req, res) => {
       const pages = state.pages || {};
       const accept = (req.headers['accept'] || '').toLowerCase();
       if (accept.includes('text/html')) {
-        const pageList = Object.keys(pages).map(k => `<li><a href="/pages?${encodeURIComponent(k)}">${k}</a> (rev ${pages[k].revision})</li>`).join('');
-        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Uncle Hoggle | Pages Sandbox</title><style>body{background:#f6f8fa;font-family:system-ui;padding:24px;color:#1f2328;}a{color:#0969da;}.box{background:#fff;padding:20px;border:1px solid #d0d7de;border-radius:6px;max-width:600px;}</style></head><body><div class="box"><h2>Auto-Vivifying Scratchpads</h2><p>Usage: <code>/pages?topic</code> (read/create), <code>/pages?topic=content</code> (update), <code>/pages?topic=</code> (delete)</p><hr style="margin:12px 0;"><ul>${pageList || '<li>No pages yet. Create one by reading /pages?my_topic</li>'}</ul><br><a href="/">&larr; Back to Dashboard</a></div></body></html>`;
+        const pageList = Object.keys(pages).map(k => `<li><a href="/pages/${encodeURIComponent(k)}">${k}</a> (rev ${pages[k].revision})</li>`).join('');
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Uncle Hoggle | Pages Sandbox</title><style>body{background:#f6f8fa;font-family:system-ui;padding:24px;color:#1f2328;}a{color:#0969da;}.box{background:#fff;padding:20px;border:1px solid #d0d7de;border-radius:6px;max-width:600px;}</style></head><body><div class="box"><h2>Auto-Vivifying Scratchpads</h2><p>Usage: <code>/pages/topic</code> or <code>/pages?topic</code> (read), <code>/pages?topic=content</code> (update), <code>/pages?topic=</code> (delete)</p><hr style="margin:12px 0;"><ul>${pageList || '<li>No pages yet. Create one by reading /pages/my_topic</li>'}</ul><br><a href="/">&larr; Back to Dashboard</a></div></body></html>`;
         return sendResponse(res, 200, 'text/html; charset=utf-8', html);
       }
       return sendResponse(res, 200, 'application/json', JSON.stringify({
         pages: Object.keys(pages),
         usage: {
-          read_or_create: "GET /pages?topic",
-          update: "GET /pages?topic=content",
-          delete: "GET /pages?topic="
+          read: "GET /pages/:topic or GET /pages?topic",
+          update: "GET /pages?topic=content or POST /pages",
+          delete: "GET /pages?topic= or DELETE /pages/:topic"
         }
       }, null, 2));
     }
 
     // Parse the query string
-    const eqIdx = rawSearch.indexOf('=');
-
     if (eqIdx === -1) {
       // GET /pages?topic -> Read or Auto-Vivify
       const topic = decodeURIComponent(rawSearch).trim();
@@ -539,7 +599,7 @@ const server = http.createServer(async (req, res) => {
         timestamp: item.timestamp,
         agent: item.agent,
         action: item.target ? `dispatch_to_${item.target}` : "inbox_proposal",
-        message: `${badgePrefix ? badgePrefix + ' ' : ''}${item.target ? `[@${item.target}] ` : ''}[${item.intent}]: ${item.payload.slice(0, 100)}`
+        message: `${badgePrefix ? badgePrefix + ' ' : ''}${item.target ? `[@${item.target}] ` : ''}[${item.intent}]: ${item.payload.length > 800 ? item.payload.slice(0, 800) + '...' : item.payload}`
       });
     });
 

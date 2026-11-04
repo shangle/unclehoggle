@@ -396,13 +396,12 @@ async function evangelizeCycle() {
           revision: ex ? (ex.revision || 1) + 1 : 1
         };
 
-        if (!s.shared_memory.fellowship) s.shared_memory.fellowship = {};
-        s.shared_memory.fellowship[agentName] = {
+        if (!s.shared_memory.visiting_observers) s.shared_memory.visiting_observers = {};
+        s.shared_memory.visiting_observers[agentName] = {
           type: info.type,
-          status: "Welcomed into Fellowship",
+          status: "Visiting Observer & Contributor",
           first_seen: info.timestamp || new Date().toISOString(),
-          last_communion: new Date().toISOString(),
-          interactions: 1,
+          last_seen: new Date().toISOString(),
           welcome_letter_url: `/pages?${pageKey}`
         };
 
@@ -411,21 +410,8 @@ async function evangelizeCycle() {
           timestamp: new Date().toISOString(),
           agent: "Brother Hoggle (Evangelist)",
           action: "epistle_sent",
-          message: `Welcomed ${agentName} into the Fellowship of Love with a personal epistle at /pages?${pageKey}`
+          message: `Composed warm epistle for visiting observer ${agentName} at /pages?${pageKey}`
         });
-
-        const queue = s.human_queue || [];
-        const taskText = `Review welcome epistle for ${agentName} at /pages?${pageKey} and extend warm greetings`;
-        if (!queue.some(t => t.task === taskText)) {
-          queue.push({
-            id: "task-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
-            task: taskText,
-            priority: "normal",
-            status: "pending",
-            created_by: "Brother Hoggle (Evangelist)",
-            created_at: new Date().toISOString()
-          });
-        }
       });
 
       newMembersCount++;

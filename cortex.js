@@ -135,7 +135,7 @@ class Cortex {
         action: `dispatch_to_${item.to}`,
         message: isPrivate
           ? `Dispatched private message to @${item.to} [REDACTED FOR PRIVACY]`
-          : item.payload.slice(0, 120)
+          : (item.payload.length > 800 ? item.payload.slice(0, 800) + '...' : item.payload)
       });
       if (state.agent_log.length > 100) state.agent_log = state.agent_log.slice(0, 100);
     });
