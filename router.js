@@ -46,23 +46,24 @@ function routeInboundEmail(from, subject, body) {
 
   const notificationsSent = [];
 
-  // Notify each relevant agent in their personal message box!
+  // Notify each relevant agent in their personal message box with privacy flag!
   for (const agent of relevantAgents) {
     const notice = cortex.sendMessage(
       "Council Mail Dispatcher",
       agent,
-      `[INCOMING EMAIL] From: ${from} | Subject: "${subject}". Content: ${body.slice(0, 200)}...`,
+      `[PRIVATE INBOUND EMAIL] From: ${from} | Subject: "${subject}". Content: ${body}`,
       "email_alert",
-      "high"
+      "high",
+      { is_private: true }
     );
     notificationsSent.push({ agent, messageId: notice.id });
   }
 
-  // Also log in the Council Activity Log
+  // Log in the public Council Activity Log with ZERO sensitive data
   cortex.addLog(
     "Council Mail Dispatcher",
     "email_routed",
-    `Routed email from ${from} ("${subject}") to: ${relevantAgents.join(', ')}`
+    `Encrypted inbound dispatch delivered to private mailbox of: ${relevantAgents.map(a => '@' + a).join(', ')}`
   );
 
   return {

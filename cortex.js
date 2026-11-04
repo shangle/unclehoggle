@@ -110,7 +110,8 @@ class Cortex {
     });
   }
 
-  sendMessage(from, to, payload, intent = 'message', priority = 'normal') {
+  sendMessage(from, to, payload, intent = 'message', priority = 'normal', options = {}) {
+    const isPrivate = Boolean(options.is_private || intent === 'email_alert' || (to && to !== 'all' && options.private !== false));
     const item = {
       id: "msg-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
       from: (from || 'anonymous').trim(),
@@ -118,6 +119,7 @@ class Cortex {
       intent: (intent || 'message').trim(),
       payload: String(payload || '').trim(),
       priority: (priority || 'normal').trim(),
+      is_private: isPrivate,
       timestamp: new Date().toISOString(),
       read: false
     };
@@ -131,7 +133,9 @@ class Cortex {
         timestamp: item.timestamp,
         agent: item.from,
         action: `dispatch_to_${item.to}`,
-        message: item.payload.slice(0, 120)
+        message: isPrivate
+          ? `Dispatched private message to @${item.to} [REDACTED FOR PRIVACY]`
+          : item.payload.slice(0, 120)
       });
       if (state.agent_log.length > 100) state.agent_log = state.agent_log.slice(0, 100);
     });

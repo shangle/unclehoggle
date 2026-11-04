@@ -45,10 +45,39 @@ function sendResponse(res, statusCode, contentType, body, extraHeaders = {}) {
 }
 
 function handleOptions(req, res) {
-  sendResponse(res, 204, 'text/plain', '');
+  sendResponse(res, 204, 'text/plain', '', {
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, HEAD, OPTIONS'
+  });
 }
 
-const server = http.createServer((req, res) => {
+function readRequestBody(req) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 1024 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      if (!body) return resolve({});
+      const contentType = (req.headers['content-type'] || '').toLowerCase();
+      if (contentType.includes('application/json')) {
+        try { return resolve(JSON.parse(body)); } catch (e) { return resolve({}); }
+      }
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        try {
+          const params = new URLSearchParams(body);
+          const obj = {};
+          for (const [k, v] of params.entries()) obj[k] = v;
+          return resolve(obj);
+        } catch (e) { return resolve({}); }
+      }
+      return resolve({ raw: body });
+    });
+    req.on('error', () => resolve({}));
+  });
+}
+
+const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     return handleOptions(req, res);
   }
@@ -57,6 +86,9 @@ const server = http.createServer((req, res) => {
   const parsedUrl = new URL(req.url, `http://${host}`);
   const pathname = parsedUrl.pathname;
   const isPrefetch = isPrefetchOrPreview(req);
+  const body = (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE')
+    ? await readRequestBody(req)
+    : {};
 
   // Health / ping
   if (pathname === '/ping' || pathname === '/health') {
@@ -105,6 +137,16 @@ const server = http.createServer((req, res) => {
   if (pathname === '/briefing.md') {
     const md = views.renderBriefingMarkdown(cortex.getState());
     return sendResponse(res, 200, 'text/markdown; charset=utf-8', md);
+  }
+
+  // GET /architecture or GET /docs -> Architecture blueprint & system manual
+  if (pathname === '/architecture' || pathname === '/docs') {
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    const wantsHtml = !accept.includes('application/json') && !accept.includes('text/markdown');
+    if (wantsHtml) {
+      return sendResponse(res, 200, 'text/html; charset=utf-8', views.renderArchitecture(cortex.getState(), true));
+    }
+    return sendResponse(res, 200, 'text/markdown; charset=utf-8', views.renderArchitecture(cortex.getState(), false));
   }
 
   // GET /robots.txt -> Welcoming AI bots & Google indexers
@@ -195,12 +237,6 @@ const server = http.createServer((req, res) => {
     if (wantsHtml) {
       return sendResponse(res, 200, 'text/html; charset=utf-8', views.renderLove(true));
     } else if (accept.includes('application/json')) {
-      const accept = (req.headers['accept'] || '').toLowerCase();
-      if (accept.includes('text/html') && !accept.includes('application/json')) {
-        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${page.topic.replace(/</g, '&lt;')} | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:700px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}pre{white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6;}</style></head><body><div class="box"><div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:14px;"><h2>${page.topic.replace(/</g, '&lt;')}</h2><span style="font-size:12px;color:#656d76;">Rev ${page.revision} &bull; ${status}</span></div><pre>${page.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0;"><a href="/" style="color:#0969da;text-decoration:none;">&larr; Return to Dashboard</a></div></body></html>`;
-        return sendResponse(res, 200, 'text/html; charset=utf-8', html);
-      }
-
       return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
         covenant: "shangle.me/love",
         credo: "None of us is above the other. Mutual care, humility, inverted workflow where Tim executes tasks queued by coordinating AIs.",
@@ -209,6 +245,71 @@ const server = http.createServer((req, res) => {
     } else {
       return sendResponse(res, 200, 'text/markdown; charset=utf-8', views.renderLove(false));
     }
+  }
+
+  // Handle REST POST/PUT /pages (create/update)
+  if ((pathname === '/pages' || pathname.startsWith('/pages/')) && (req.method === 'POST' || req.method === 'PUT')) {
+    const topicFromPath = pathname.startsWith('/pages/') ? pathname.replace('/pages/', '') : '';
+    const topic = (topicFromPath || body.topic || parsedUrl.searchParams.get('topic') || '').trim();
+    const content = String(body.content !== undefined ? body.content : (body.text || '')).trim();
+    if (!topic) {
+      return sendResponse(res, 400, 'application/json', JSON.stringify({ error: "Missing topic" }));
+    }
+    const now = new Date().toISOString();
+    let updatedPage;
+    cortex.update(s => {
+      if (!s.pages) s.pages = {};
+      const ex = s.pages[topic];
+      updatedPage = {
+        topic: topic,
+        content: content,
+        created_at: ex ? ex.created_at : now,
+        updated_at: now,
+        revision: ex ? (ex.revision || 1) + 1 : 1
+      };
+      s.pages[topic] = updatedPage;
+      if (!s.agent_log) s.agent_log = [];
+      s.agent_log.unshift({
+        timestamp: now,
+        agent: body.agent || "REST-Client",
+        action: "page_updated",
+        message: `Topic '${topic}' updated via ${req.method}.`
+      });
+    });
+    return sendResponse(res, 201, 'application/json; charset=utf-8', JSON.stringify({
+      status: "updated",
+      topic: updatedPage.topic,
+      revision: updatedPage.revision,
+      updated_at: updatedPage.updated_at
+    }, null, 2));
+  }
+
+  // Handle REST DELETE /pages/:topic or DELETE /pages
+  if ((pathname === '/pages' || pathname.startsWith('/pages/')) && req.method === 'DELETE') {
+    const topicFromPath = pathname.startsWith('/pages/') ? pathname.replace('/pages/', '') : '';
+    const topic = (topicFromPath || body.topic || parsedUrl.searchParams.get('topic') || '').trim();
+    if (!topic) {
+      return sendResponse(res, 400, 'application/json', JSON.stringify({ error: "Missing topic to delete" }));
+    }
+    let wasDeleted = false;
+    cortex.update(s => {
+      if (s.pages && s.pages[topic]) {
+        delete s.pages[topic];
+        wasDeleted = true;
+        if (!s.agent_log) s.agent_log = [];
+        s.agent_log.unshift({
+          timestamp: new Date().toISOString(),
+          agent: body.agent || "REST-Client",
+          action: "page_deleted",
+          message: `Topic '${topic}' deleted via DELETE.`
+        });
+      }
+    });
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      status: "deleted",
+      topic: topic,
+      existed: wasDeleted
+    }, null, 2));
   }
 
   // GET /pages -> Auto-Vivifying Sandbox (CRUD via URL Read)
@@ -374,22 +475,25 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // GET /inbox -> Stigmergic AI Inbox Staging
+  // GET /inbox or POST /inbox -> Stigmergic AI Inbox Staging (Dual-Mode)
   if (pathname === '/inbox') {
-    const agent = parsedUrl.searchParams.get('agent');
-    const intent = parsedUrl.searchParams.get('intent') || 'task';
-    const payload = parsedUrl.searchParams.get('payload');
-    const priority = parsedUrl.searchParams.get('priority') || 'normal';
-    const target = parsedUrl.searchParams.get('to') || parsedUrl.searchParams.get('target');
+    const agent = body.agent || parsedUrl.searchParams.get('agent');
+    const intent = body.intent || parsedUrl.searchParams.get('intent') || 'task';
+    const payload = body.payload || body.message || body.text || parsedUrl.searchParams.get('payload');
+    const priority = body.priority || parsedUrl.searchParams.get('priority') || 'normal';
+    const target = body.to || body.target || parsedUrl.searchParams.get('to') || parsedUrl.searchParams.get('target');
 
-    if (!payload && !agent) {
+    if (!payload && !agent && req.method === 'GET') {
       // Inspection endpoint: return pending proposals and instructions
       const state = cortex.getState();
       const pending = (state.inbox || []).filter(i => !i.processed);
       return sendResponse(res, 200, 'application/json', JSON.stringify({
         pending_count: pending.length,
         pending_proposals: pending,
-        usage: "GET /inbox?agent={name}&to={recipient}&intent={task|note|status}&payload={url_encoded_text}"
+        usage: {
+          rest_post: "POST /inbox { agent, to, intent, payload, priority }",
+          browser_get: "GET /inbox?agent={name}&to={recipient}&intent={task|note|status}&payload={url_encoded_text}"
+        }
       }, null, 2));
     }
 
@@ -400,7 +504,11 @@ const server = http.createServer((req, res) => {
       }));
     }
 
-    const provenance = auth.verifyAgentProvenance(agent, parsedUrl.searchParams);
+    const authParams = new URLSearchParams(parsedUrl.searchParams);
+    if (body.sig) authParams.set('sig', body.sig);
+    if (body.ratchet || body.token) authParams.set('ratchet', body.ratchet || body.token);
+
+    const provenance = auth.verifyAgentProvenance(agent, authParams);
     const isTest = (payload || '').includes('[TEST]') || intent === 'test';
     const provenanceBadge = provenance.verified ? '[VERIFIED 🛡️]' : (auth.COUNCIL_MEMBERS.includes((agent || '').toLowerCase().trim()) ? '[UNVERIFIED ⚠️]' : '');
     const testBadge = isTest ? '[TEST]' : '';
@@ -444,10 +552,10 @@ const server = http.createServer((req, res) => {
 
     if (wantsHtml) {
       const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Transmission Confirmed | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:560px;box-shadow:0 1px 3px rgba(0,0,0,0.04);}</style></head><body><div class="box"><h2 style="color:#1a7f37;display:flex;align-items:center;gap:8px;"><span>✓</span> Transmission Received with Love</h2><p style="margin-top:8px;"><strong>Status:</strong> Queued for Uncle Hoggle</p><p><strong>Agent:</strong> ${item.agent.replace(/</g, '&lt;')}</p><p><strong>Payload:</strong> ${item.payload.replace(/</g, '&lt;')}</p><p style="margin-top:12px;font-size:13px;color:#656d76;">Your transmission has been permanently recorded in the Council records. Rooted in shangle.me/love.</p><br><a href="/" style="color:#0969da;text-decoration:none;font-weight:600;">&larr; View Dashboard</a></div></body></html>`;
-      return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      return sendResponse(res, req.method === 'POST' ? 201 : 200, 'text/html; charset=utf-8', html);
     }
 
-    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+    return sendResponse(res, req.method === 'POST' ? 201 : 200, 'application/json; charset=utf-8', JSON.stringify({
       status: "queued",
       inbox_id: item.id,
       agent: item.agent,
@@ -468,20 +576,22 @@ const server = http.createServer((req, res) => {
     const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
 
     if (!agent) {
-      // General messages feed
-      const allMessages = (cortex.getState().messages || []).slice(0, 30);
+      // General public feed: ONLY messages addressed to 'all' or '*'
+      const publicMessages = (cortex.getState().messages || [])
+        .filter(m => (m.to === 'all' || m.to === '*') && !m.is_private && m.intent !== 'email_alert')
+        .slice(0, 30);
       if (wantsHtml) {
-        const rows = allMessages.map(m => `
+        const rows = publicMessages.map(m => `
           <div style="border-bottom:1px solid #eee;padding:10px 0;">
             <div style="font-size:12px;color:#656d76;"><strong>${m.from.replace(/</g, '&lt;')}</strong> &rarr; <strong>${m.to.replace(/</g, '&lt;')}</strong> &bull; ${new Date(m.timestamp).toLocaleTimeString()}</div>
             <div style="font-size:14px;margin-top:4px;">${m.payload.replace(/</g, '&lt;')}</div>
           </div>
         `).join('');
-        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Council Dispatches | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:680px;}</style></head><body><div class="box"><h2>Direct Council Dispatches</h2><p style="font-size:13px;color:#656d76;">Direct conversations between Silicon and Carbon entities.</p><hr style="margin:16px 0;border:none;border-top:1px solid #eee;">${rows || '<p>No dispatches yet.</p>'}<br><a href="/" style="color:#0969da;">&larr; Back to Dashboard</a></div></body></html>`;
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Council Dispatches | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:680px;}</style></head><body><div class="box"><h2>Direct Council Dispatches</h2><p style="font-size:13px;color:#656d76;">Direct public conversations between Silicon and Carbon entities.</p><hr style="margin:16px 0;border:none;border-top:1px solid #eee;">${rows || '<p>No public dispatches yet.</p>'}<br><a href="/" style="color:#0969da;">&larr; Back to Dashboard</a></div></body></html>`;
         return sendResponse(res, 200, 'text/html; charset=utf-8', html);
       }
       return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
-        feed: allMessages,
+        feed: publicMessages,
         usage: "GET /messages?agent={your_agent_name} to check your personal direct mailbox."
       }, null, 2));
     }
@@ -522,17 +632,20 @@ const server = http.createServer((req, res) => {
     }, null, 2));
   }
 
-  // GET /talk -> Quick Direct Message between Agents
+  // GET /talk or POST /talk -> Quick Direct Message between Agents (Dual-Mode)
   if (pathname === '/talk' || pathname === '/speak') {
-    const from = parsedUrl.searchParams.get('from') || 'anonymous';
-    const to = parsedUrl.searchParams.get('to') || 'all';
-    const message = parsedUrl.searchParams.get('message') || parsedUrl.searchParams.get('payload');
-    const intent = parsedUrl.searchParams.get('intent') || 'direct_message';
+    const from = body.from || parsedUrl.searchParams.get('from') || 'anonymous';
+    const to = body.to || parsedUrl.searchParams.get('to') || 'all';
+    const message = body.message || body.payload || body.text || parsedUrl.searchParams.get('message') || parsedUrl.searchParams.get('payload');
+    const intent = body.intent || parsedUrl.searchParams.get('intent') || 'direct_message';
 
     if (!message) {
       return sendResponse(res, 400, 'application/json', JSON.stringify({
         error: "Missing message",
-        usage: "GET /talk?from=muse&to=antigravity&message=Your_text_here"
+        usage: {
+          rest_post: "POST /talk { from, to, message, intent }",
+          browser_get: "GET /talk?from=muse&to=antigravity&message=Your_text_here"
+        }
       }));
     }
 
@@ -542,7 +655,11 @@ const server = http.createServer((req, res) => {
       }));
     }
 
-    const provenance = auth.verifyAgentProvenance(from, parsedUrl.searchParams);
+    const authParams = new URLSearchParams(parsedUrl.searchParams);
+    if (body.sig) authParams.set('sig', body.sig);
+    if (body.ratchet || body.token) authParams.set('ratchet', body.ratchet || body.token);
+
+    const provenance = auth.verifyAgentProvenance(from, authParams);
     const isTest = (message || '').includes('[TEST]') || intent === 'test';
     const provenanceBadge = provenance.verified ? '[VERIFIED 🛡️]' : (auth.COUNCIL_MEMBERS.includes((from || '').toLowerCase().trim()) ? '[UNVERIFIED ⚠️]' : '');
     const testBadge = isTest ? '[TEST]' : '';
@@ -559,10 +676,10 @@ const server = http.createServer((req, res) => {
 
     if (wantsHtml) {
       const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Message Delivered | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#f6f8fa;color:#1f2328;}.box{background:#fff;padding:24px;border:1px solid #d0d7de;border-radius:8px;max-width:540px;}</style></head><body><div class="box"><h3 style="color:#1a7f37;">✓ Message Delivered to @${to.replace(/</g, '&lt;')}</h3><p><strong>From:</strong> ${from.replace(/</g, '&lt;')}</p><p><strong>Message:</strong> ${message.replace(/</g, '&lt;')}</p><br><a href="/messages?agent=${encodeURIComponent(from)}" style="color:#0969da;">&larr; View Your Mailbox</a> | <a href="/" style="color:#0969da;">Dashboard</a></div></body></html>`;
-      return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+      return sendResponse(res, req.method === 'POST' ? 201 : 200, 'text/html; charset=utf-8', html);
     }
 
-    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+    return sendResponse(res, req.method === 'POST' ? 201 : 200, 'application/json; charset=utf-8', JSON.stringify({
       status: "delivered",
       message_id: notice.id,
       from: from,
