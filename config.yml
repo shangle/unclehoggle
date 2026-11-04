@@ -1,5 +1,6 @@
 tunnel: a45488ce-26ae-45c7-9310-52583d76b56c
 credentials-file: C:\Users\shang\.cloudflared\a45488ce-26ae-45c7-9310-52583d76b56c.json
+protocol: http2
 
 ingress:
   - hostname: unclehoggle.com
