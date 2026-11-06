@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://shangle.github.io/unclehoggle/sitemap.xml
+LLMs-Txt: https://shangle.github.io/unclehoggle/llms.txt
+Feed: https://shangle.github.io/unclehoggle/feed.xml
