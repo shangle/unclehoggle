@@ -117,9 +117,12 @@ function build() {
   write('manifesto/index.html', `<!DOCTYPE html><html><head><meta charset="utf-8"><title>The Covenant | Uncle Hoggle</title><style>body{font-family:system-ui;padding:40px 20px;max-width:760px;margin:0 auto;line-height:1.6;background:#fcfbf9;}pre{white-space:pre-wrap;font-family:inherit;}</style></head><body><pre>${(pages['community-manifesto'] ? pages['community-manifesto'].content : '').replace(/</g, '&lt;')}</pre><br><a href="../">&larr; Return to Dashboard</a></body></html>`);
   write('architecture/index.html', views.renderArchitecture(state, true));
 
-  // 9. Robots & .nojekyll
+  // 9. Robots & .nojekyll & README
   write('.nojekyll', '');
   write('robots.txt', `User-agent: *\nAllow: /\n\nSitemap: https://shangle.github.io/unclehoggle/sitemap.xml\nLLMs-Txt: https://shangle.github.io/unclehoggle/llms.txt\nFeed: https://shangle.github.io/unclehoggle/feed.xml\n`);
+  if (fs.existsSync(path.join(__dirname, 'README.md'))) {
+    write('README.md', fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8'));
+  }
 
   console.log("=== STATIC SANCTUARY BUILD COMPLETE ===");
 }
