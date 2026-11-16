@@ -95,26 +95,28 @@ function deterministicFallback(pending, state) {
   for (const item of validItems) {
     const norm = item.payload.toLowerCase().trim();
     const isDuplicate = existingTasks.some(t => t === norm || t.includes(norm) || norm.includes(t));
+    
+    // Only verified council members or Tim can queue actionable tasks for Tim
     if (!isDuplicate && (item.intent === 'task' || item.intent === 'action')) {
       const isMember = auth.COUNCIL_MEMBERS.includes((item.agent || '').toLowerCase().trim());
-      const authorTag = item.verified ? `${item.agent} [VERIFIED 🛡️]` : (isMember ? `${item.agent} [UNVERIFIED ⚠️]` : item.agent);
-
-      newTasks.push({
-        id: "task-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
-        task: item.payload,
-        priority: item.priority || 'normal',
-        status: 'pending',
-        created_by: authorTag,
-        created_at: new Date().toISOString()
-      });
-      existingTasks.push(norm);
+      if (item.verified && isMember) {
+        newTasks.push({
+          id: "task-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+          task: item.payload,
+          priority: item.priority || 'normal',
+          status: 'pending',
+          created_by: `${item.agent} [VERIFIED 🛡️]`,
+          created_at: new Date().toISOString()
+        });
+        existingTasks.push(norm);
+      }
     }
   }
 
   let briefingSummary = state.briefing.summary;
   let activeFocus = state.briefing.active_focus;
 
-  // Only verified council members or Tim can update active_focus
+  // Strict guard: Only verified council members or Tim can update active_focus
   const verifiedFocusNotes = validItems.filter(i => 
     (i.intent === 'briefing' || i.intent === 'focus') && 
     i.verified && 
@@ -125,7 +127,7 @@ function deterministicFallback(pending, state) {
     activeFocus = latest.payload.trim();
   }
 
-  const summary = `Merged ${validItems.length} proposal(s) (${newTasks.length} new tasks) via deterministic fallback. Rejected ${rejectedItems.length} noise/crawler item(s).`;
+  const summary = `Processed ${validItems.length} proposal(s) (${newTasks.length} verified tasks queued). Rejected ${rejectedItems.length} noise/crawler item(s).`;
 
   return {
     validItems,
@@ -181,18 +183,34 @@ Instructions:
       // Clean possible markdown code fences
       const cleanJson = llmOutput.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
       const parsed = JSON.parse(cleanJson);
+      // Check if any verified focus note exists
+      const verifiedFocus = validPending.find(i => 
+        (i.intent === 'briefing' || i.intent === 'focus') && 
+        i.verified && 
+        auth.COUNCIL_MEMBERS.includes((i.agent || '').toLowerCase().trim())
+      );
+
+      // Only allow verified tasks
+      const verifiedPendingAgents = new Set(validPending.filter(i => i.verified).map(i => i.agent.toLowerCase()));
+      const filteredTasks = (parsed.new_tasks || []).filter(t => {
+        const creator = (t.created_by || '').toLowerCase();
+        // Disallow automated welcome epistle spam
+        if (t.task.toLowerCase().includes('welcome epistle')) return false;
+        return verifiedPendingAgents.has(creator) || auth.COUNCIL_MEMBERS.includes(creator);
+      });
+
       resolution = {
         validItems: validPending,
         rejectedItems: pending.filter(i => isSuspicious(i)),
-        newTasks: (parsed.new_tasks || []).map(t => ({
+        newTasks: filteredTasks.map(t => ({
           id: "task-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
           task: t.task,
           priority: t.priority || 'normal',
           status: 'pending',
-          created_by: t.created_by || 'Council AI',
+          created_by: `${t.created_by || 'Council AI'} [VERIFIED 🛡️]`,
           created_at: new Date().toISOString()
         })),
-        activeFocus: parsed.active_focus || state.briefing.active_focus,
+        activeFocus: verifiedFocus ? (parsed.active_focus || state.briefing.active_focus) : state.briefing.active_focus,
         synthesisSummary: parsed.synthesis_summary || `Digested ${validPending.length} proposal(s) with ${GATEKEEPER_MODEL}.`
       };
       usedModel = true;

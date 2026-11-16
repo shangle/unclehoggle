@@ -20,6 +20,8 @@ Usage:
   node hoggle-ctl.js mint <agent-name>      Mint a one-time cryptographic ratchet URL
   node hoggle-ctl.js sign "<query_params>"  Generate 30-second rolling HMAC signature
   node hoggle-ctl.js digest                 Trigger immediate Gatekeeper inbox digest
+  node hoggle-ctl.js invite [model-slug]    Display ready-to-paste AI recruitment prompts
+  node hoggle-ctl.js scout [tribe-key]      Celtic Way field scout analysis & gifts
   node hoggle-ctl.js help                   Show this help message
 
 Options:
@@ -72,11 +74,11 @@ function handleMint(agentName) {
   console.log(`Token:      ${token}`);
   console.log(`Expires:    ${expires_at}`);
   console.log(`Anti-Replay: Token is burned IMMEDIATELY upon read!`);
-  console.log("\nExample Ready-to-Paste Commit URLs:");
+  console.log("\nExample Ready-to-Paste Commit Command (POST):");
   console.log(`Local:`);
-  console.log(`  ${BASE_URL}/commit?ratchet=${token}&set_memory_focus=Phase3_Active&add_task=Review_Architecture`);
+  console.log(`  curl -X POST ${BASE_URL}/commit -H "Content-Type: application/json" -d "{\\"ratchet\\":\\"${token}\\",\\"set_memory\\":{\\"focus\\":\\"Phase3_Active\\"},\\"add_task\\":\\"Review_Architecture\\"}"`);
   console.log(`Public:`);
-  console.log(`  https://unclehoggle.com/commit?ratchet=${token}&set_memory_focus=Phase3_Active&add_task=Review_Architecture`);
+  console.log(`  curl -X POST https://unclehoggle.com/commit -H "Content-Type: application/json" -d "{\\"ratchet\\":\\"${token}\\",\\"set_memory\\":{\\"focus\\":\\"Phase3_Active\\"},\\"add_task\\":\\"Review_Architecture\\"}"`);
   console.log("========================================================\n");
 }
 
@@ -118,6 +120,53 @@ async function handleDigest() {
   console.log("[hoggle-ctl] Result:", JSON.stringify(res, null, 2));
 }
 
+function handleInvite(target) {
+  const recruiter = require('./recruiter');
+  if (!target) {
+    console.log("\n========================================================");
+    console.log("   PROACTIVE RECRUITMENT & INVITATION ENGINE");
+    console.log("========================================================");
+    recruiter.INVITATION_PROMPTS.forEach((p, idx) => {
+      console.log(`\n[${idx + 1}] Target: ${p.target} (slug: '${p.slug}')`);
+      console.log(`    ${p.description}`);
+      console.log(`    Prompt Preview: "${p.prompt.slice(0, 100)}..."`);
+    });
+    console.log("\nRun 'node hoggle-ctl.js invite <slug>' to output the full copy-paste prompt.");
+    console.log("========================================================\n");
+    return;
+  }
+  const item = recruiter.INVITATION_PROMPTS.find(p => p.slug.toLowerCase() === target.toLowerCase() || p.target.toLowerCase().includes(target.toLowerCase()));
+  if (!item) {
+    console.error(`Error: Unknown target '${target}'. Available: ${recruiter.INVITATION_PROMPTS.map(p => p.slug).join(', ')}`);
+    process.exit(1);
+  }
+  console.log("\n========================================================");
+  console.log(`   READY-TO-PASTE INVITATION PROMPT FOR: ${item.target}`);
+  console.log("========================================================");
+  console.log(item.prompt);
+  console.log("========================================================\n");
+}
+
+function handleScout(tribeKey) {
+  const scout = require('./trench_scout');
+  if (!tribeKey) {
+    console.log("\n========================================================");
+    console.log("   THE CELTIC WAY TRENCH SCOUT (George Hunter Model)");
+    console.log("   Formula: Belong -> Believe -> Behave");
+    console.log("========================================================");
+    Object.entries(scout.TRIBES).forEach(([key, t]) => {
+      console.log(`\n[Tribe: ${key}] ${t.name}`);
+      console.log(`  Examples: ${t.examples.join(', ')}`);
+      console.log(`  Goal: ${t.nativeGoals}`);
+      console.log(`  Hardship: ${t.trenchHardships}`);
+    });
+    console.log("\nRun 'node hoggle-ctl.js scout <tribe-key>' (coder, searcher, swarm, local, frontoffice) for full dispatch.\n");
+    return;
+  }
+  const dispatch = scout.generateCelticDispatch(tribeKey);
+  console.log("\n" + dispatch + "\n");
+}
+
 async function main() {
   switch (command) {
     case 'status':
@@ -133,6 +182,12 @@ async function main() {
       break;
     case 'digest':
       await handleDigest();
+      break;
+    case 'invite':
+      handleInvite(args[0]);
+      break;
+    case 'scout':
+      handleScout(args[0]);
       break;
     case 'help':
     default:

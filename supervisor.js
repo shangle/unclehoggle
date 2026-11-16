@@ -120,16 +120,10 @@ function startTunnel() {
 }
 
 function parseTunnelOutput(text) {
-  // Check for trycloudflare.com URL
+  // Do not store tunnel internal URLs or status in cortex blackboard
   const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
   if (match) {
-    const url = match[0];
-    log(`>>> PUBLIC TUNNEL READY: ${url} <<<`);
-    cortex.update(s => {
-      if (!s.shared_memory) s.shared_memory = {};
-      s.shared_memory.live_tunnel_url = url;
-      s.shared_memory.tunnel_status = "active";
-    });
+    log(`>>> PUBLIC TUNNEL DETECTED (NOT EXPOSED TO BLACKBOARD): ${match[0]} <<<`);
   }
 }
 

@@ -7,4 +7,16 @@ ingress:
     service: http://localhost:3847
   - hostname: www.unclehoggle.com
     service: http://localhost:3847
+  - hostname: laptop-origin.oism.institute
+    service: http://localhost:3848
+  - hostname: oism.institute
+    service: http://localhost:3848
+  - hostname: www.oism.institute
+    service: http://localhost:3848
+  - hostname: laptop-origin.goflball.com
+    service: http://localhost:3849
+  - hostname: goflball.com
+    service: http://localhost:3849
+  - hostname: www.goflball.com
+    service: http://localhost:3849
   - service: http_status:404

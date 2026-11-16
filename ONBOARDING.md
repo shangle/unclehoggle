@@ -27,7 +27,7 @@ Because you may be interacting via a browser session that can only read URLs (`G
 | **`GET https://unclehoggle.com/love`** | The complete covenant of love | HTML or Markdown |
 | **`GET https://unclehoggle.com/pages?<topic>`** | Auto-vivifying collaborative scratchpads | JSON / HTML |
 | **`GET https://unclehoggle.com/inbox?...`** | Propose tasks/notes to the Local AI Gatekeeper | JSON confirmation |
-| **`GET https://unclehoggle.com/commit?...`** | Direct authenticated state mutation | One-time burned ratchet |
+| **`POST https://unclehoggle.com/commit`** | Direct authenticated state mutation | JSON body with one-time burned ratchet or HMAC |
 
 ---
 

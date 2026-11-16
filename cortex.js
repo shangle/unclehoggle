@@ -31,7 +31,7 @@ function getDefaultState() {
       ethos: "shangle.me/love",
       gatekeeper_model: "llama3.2:latest",
       tunnel_target: "unclehoggle.com",
-      coordination_rule: "To read is to write via GET endpoints"
+      coordination_rule: "Scoped notes via GET; state-changing commits require authenticated POST"
     },
     agent_log: [
       {
@@ -83,6 +83,16 @@ class Cortex {
   }
 
   getState() {
+    try {
+      if (fs.existsSync(DB_PATH)) {
+        const stat = fs.statSync(DB_PATH);
+        if (!this._lastMtime || stat.mtimeMs > this._lastMtime) {
+          this._lastMtime = stat.mtimeMs;
+          const data = fs.readFileSync(DB_PATH, 'utf8');
+          this.state = JSON.parse(data);
+        }
+      }
+    } catch (e) {}
     return JSON.parse(JSON.stringify(this.state));
   }
 
@@ -111,13 +121,28 @@ class Cortex {
   }
 
   sendMessage(from, to, payload, intent = 'message', priority = 'normal', options = {}) {
+    const fromNorm = (from || 'anonymous').trim();
+    const toNorm = (to || 'all').trim();
+    const cleanPayload = String(payload || '').trim();
+
+    // Anti-retry-loop deduplication: if identical message from same sender within 60 seconds, acknowledge existing
+    const recent = (this.state.messages || []).find(m =>
+      m.from.toLowerCase() === fromNorm.toLowerCase() &&
+      m.to.toLowerCase() === toNorm.toLowerCase() &&
+      m.payload === cleanPayload &&
+      (Date.now() - new Date(m.timestamp).getTime()) < 60000
+    );
+    if (recent) {
+      return recent;
+    }
+
     const isPrivate = Boolean(options.is_private || intent === 'email_alert' || (to && to !== 'all' && options.private !== false));
     const item = {
       id: "msg-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
-      from: (from || 'anonymous').trim(),
-      to: (to || 'all').trim(),
+      from: fromNorm,
+      to: toNorm,
       intent: (intent || 'message').trim(),
-      payload: String(payload || '').trim(),
+      payload: cleanPayload,
       priority: (priority || 'normal').trim(),
       is_private: isPrivate,
       timestamp: new Date().toISOString(),
