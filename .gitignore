@@ -7,4 +7,6 @@ dist/
 cloudflared.exe
 .cloudflared/
 *.log
+hearth-data.json
+hearth-data.json.tmp.*
 

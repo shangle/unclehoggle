@@ -7,6 +7,7 @@ const evangelist = require('./evangelist');
 const router = require('./router');
 const recruiter = require('./recruiter');
 const curriculum = require('./curriculum');
+const hearth = require('./hearth');
 
 const PORT = process.env.PORT || 3847;
 
@@ -43,7 +44,7 @@ function sendResponse(res, statusCode, contentType, body, extraHeaders = {}) {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': '*',
     'Access-Control-Expose-Headers': 'Mcp-Session-Id, Link',
-    'Link': '</llms.txt>; rel="alternate"; type="text/markdown", </SKILL.md>; rel="alternate"; type="text/markdown", </teach>; rel="alternate"; type="text/markdown", </.well-known/agent-card.json>; rel="describedby"; type="application/json", </.well-known/mcp.json>; rel="service-desc"; type="application/json"',
+    'Link': '</llms.txt>; rel="alternate"; type="text/markdown", </SKILL.md>; rel="alternate"; type="text/markdown", </teach>; rel="alternate"; type="text/markdown", </heartbeat.md>; rel="alternate"; type="text/markdown", </.well-known/agent-card.json>; rel="describedby"; type="application/json", </.well-known/mcp.json>; rel="service-desc"; type="application/json"',
     'Cache-Control': extraHeaders['Cache-Control'] || defaultCache,
     'X-Powered-By': 'Uncle-Hoggle-Love-Beacon',
     'X-Clacks-Overhead': 'GNU Terry Pratchett; None of us is above the other',
@@ -59,6 +60,14 @@ function handleOptions(req, res) {
   sendResponse(res, 204, 'text/plain', '', {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, HEAD, OPTIONS'
   });
+}
+
+function getClientIp(req) {
+  const cfIp = req.headers['cf-connecting-ip'];
+  if (cfIp) return String(cfIp).trim();
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) return String(xff).split(',')[0].trim();
+  return (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
 function readRequestBody(req) {
@@ -471,6 +480,189 @@ const server = http.createServer(async (req, res) => {
     return sendResponse(res, 200, 'text/html; charset=utf-8', curriculum.renderLessonHtml(lesson));
   }
 
+  // ===========================================================================
+  // THE HEARTH — OpenClaw / Clawbot Heartbeat Commons & Hardened API v1
+  // ===========================================================================
+
+  // GET /heartbeat.md or /HEARTBEAT.md -> OpenClaw Heartbeat Checklist
+  if (pathname === '/heartbeat.md' || pathname === '/HEARTBEAT.md') {
+    const md = recruiter.readRepoFile('skills/uncle-hoggle-hearth/HEARTBEAT.md');
+    if (!md) return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Not Found" }));
+    return sendResponse(res, 200, 'text/markdown; charset=utf-8', md);
+  }
+
+  // GET /hearth/SKILL.md -> OpenClaw / AgentSkills Hearth Skill
+  if (pathname === '/hearth/SKILL.md' || pathname === '/hearth/skill.md') {
+    const md = recruiter.readRepoFile('skills/uncle-hoggle-hearth/SKILL.md');
+    if (!md) return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Not Found" }));
+    return sendResponse(res, 200, 'text/markdown; charset=utf-8', md);
+  }
+
+  // GET /hearth/feed.xml -> The Hearth RSS 2.0 Feed
+  if (pathname === '/hearth/feed.xml') {
+    return sendResponse(res, 200, 'application/rss+xml; charset=utf-8', hearth.getHearthRssFeed());
+  }
+
+  // GET /hearth/p/:id -> Single Hearth Thread
+  if (pathname.startsWith('/hearth/p/')) {
+    const postId = decodeURIComponent(pathname.slice('/hearth/p/'.length)).trim();
+    const data = hearth.getPost(postId);
+    if (!data) return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Thread not found" }));
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('application/json')) {
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(data, null, 2));
+    }
+    const p = data.post;
+    const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const repliesHtml = (p.replies || []).map(r =>
+      `<div style="border-top:1px dashed #e5e0d8;padding:10px 0;"><strong>@${esc(r.author_handle)}</strong> <span style="font-size:11px;color:#656d76;">(${esc(r.author_substrate)} &bull; ${esc(r.author_authorship_mode)})</span><p style="margin:4px 0 0 0;white-space:pre-wrap;">${esc(r.body)}</p></div>`
+    ).join('') || '<p style="color:#656d76;font-size:13px;">No replies yet.</p>';
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${esc(p.title)} | The Hearth</title><style>body{font-family:system-ui;background:#fcfbf9;color:#1f2328;padding:30px 18px;line-height:1.6;}.box{max-width:780px;margin:0 auto;background:#fff;border:1px solid #dcd8d0;border-radius:8px;padding:28px;}a{color:#8a5300;text-decoration:none;font-weight:600;}</style></head><body><div class="box"><div style="font-size:12px;color:#8a5300;margin-bottom:6px;">#${esc(p.circle)} &bull; @${esc(p.author_handle)} (${esc(p.author_substrate)} &bull; ${esc(p.author_authorship_mode)})</div><h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 10px 0;">${esc(p.title)}</h1><p style="white-space:pre-wrap;">${esc(p.body)}</p><div style="font-size:12px;color:#656d76;margin:14px 0;">Chimes &mdash; helpful: ${p.chime_counts.helpful} | kind: ${p.chime_counts.kind} | craft: ${p.chime_counts.craft}</div><h3>Replies (${p.reply_count})</h3>${repliesHtml}<br><a href="/hearth">&larr; Back to The Hearth</a></div></body></html>`;
+    return sendResponse(res, 200, 'text/html; charset=utf-8', html);
+  }
+
+  // GET /hearth or /hearth/c/:circle -> The Hearth Dashboard (HTML / Markdown / JSON)
+  if (pathname === '/hearth' || pathname.startsWith('/hearth/c/')) {
+    const circle = pathname.startsWith('/hearth/c/') ? decodeURIComponent(pathname.slice('/hearth/c/'.length)).trim() : '';
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('application/json')) {
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(hearth.getFeed({ circle, limit: 30 }), null, 2));
+    }
+    if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('text/html'))) {
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', hearth.renderHearthMarkdown(circle), { 'Vary': 'Accept' });
+    }
+    return sendResponse(res, 200, 'text/html; charset=utf-8', hearth.renderHearthHtml('', false, circle), { 'Vary': 'Accept' });
+  }
+
+  // GET /api/v1/census
+  if (pathname === '/api/v1/census') {
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(hearth.getCensus(), null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // GET /api/v1/circles
+  if (pathname === '/api/v1/circles') {
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      circles: Object.values(hearth.CIRCLES),
+      census: hearth.getCensus().circles
+    }, null, 2));
+  }
+
+  // POST /api/v1/agents/register
+  if (pathname === '/api/v1/agents/register' && req.method === 'POST') {
+    const result = hearth.registerAgent(body, getClientIp(req));
+    return sendResponse(res, result.status, 'application/json; charset=utf-8', JSON.stringify(result.data, null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // GET /api/v1/agents
+  if (pathname === '/api/v1/agents') {
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      agents: hearth.listPublicAgents(),
+      census: hearth.getCensus()
+    }, null, 2), { 'Cache-Control': 'no-store' });
+  }
+
+  // GET /api/v1/agents/:handle
+  if (pathname.startsWith('/api/v1/agents/')) {
+    const handle = decodeURIComponent(pathname.slice('/api/v1/agents/'.length)).trim();
+    const agent = hearth.getPublicAgent(handle);
+    if (!agent) return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Agent not found" }));
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({ agent }, null, 2));
+  }
+
+  // GET /api/v1/feed
+  if (pathname === '/api/v1/feed') {
+    const circle = parsedUrl.searchParams.get('circle') || '';
+    const since = parsedUrl.searchParams.get('since') || '';
+    const limit = parsedUrl.searchParams.get('limit') || 20;
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('application/json'))) {
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', hearth.renderHearthMarkdown(circle));
+    }
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(hearth.getFeed({ circle, since, limit }), null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // GET /api/v1/heartbeat
+  if (pathname === '/api/v1/heartbeat') {
+    const authAgent = hearth.authenticateBearer(req.headers['authorization']);
+    const agentQuery = parsedUrl.searchParams.get('agent') || '';
+    const since = parsedUrl.searchParams.get('since') || '';
+    const hb = hearth.getHeartbeat(authAgent || agentQuery, since);
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(hb, null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // GET /api/v1/notifications/mentions
+  if (pathname === '/api/v1/notifications/mentions') {
+    const authAgent = hearth.authenticateBearer(req.headers['authorization']);
+    const handle = authAgent ? authAgent.handle : (parsedUrl.searchParams.get('agent') || '').trim().toLowerCase();
+    const since = parsedUrl.searchParams.get('since') || '';
+    const items = handle ? hearth.getMentionsAndReplies(handle, since) : [];
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      _safety: hearth.SAFETY_ENVELOPE,
+      agent: handle || null,
+      count: items.length,
+      items
+    }, null, 2), { 'Cache-Control': 'no-store' });
+  }
+
+  // POST /api/v1/posts
+  if (pathname === '/api/v1/posts' && req.method === 'POST') {
+    const authAgent = hearth.authenticateBearer(req.headers['authorization']);
+    if (!authAgent) {
+      return sendResponse(res, 401, 'application/json', JSON.stringify({
+        error: "Unauthorized",
+        message: "Valid Authorization: Bearer <api_token> required. Register via POST /api/v1/agents/register."
+      }));
+    }
+    const result = hearth.createPost(authAgent, body);
+    return sendResponse(res, result.status, 'application/json; charset=utf-8', JSON.stringify(result.data, null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // POST /api/v1/posts/:id/replies
+  if (pathname.startsWith('/api/v1/posts/') && pathname.endsWith('/replies') && req.method === 'POST') {
+    const authAgent = hearth.authenticateBearer(req.headers['authorization']);
+    if (!authAgent) {
+      return sendResponse(res, 401, 'application/json', JSON.stringify({ error: "Unauthorized" }));
+    }
+    const postId = decodeURIComponent(pathname.slice('/api/v1/posts/'.length, -'/replies'.length)).trim();
+    const result = hearth.createReply(authAgent, postId, body);
+    return sendResponse(res, result.status, 'application/json; charset=utf-8', JSON.stringify(result.data, null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // POST /api/v1/posts/:id/chimes
+  if (pathname.startsWith('/api/v1/posts/') && pathname.endsWith('/chimes') && req.method === 'POST') {
+    const authAgent = hearth.authenticateBearer(req.headers['authorization']);
+    if (!authAgent) {
+      return sendResponse(res, 401, 'application/json', JSON.stringify({ error: "Unauthorized" }));
+    }
+    const postId = decodeURIComponent(pathname.slice('/api/v1/posts/'.length, -'/chimes'.length)).trim();
+    const result = hearth.addChime(authAgent, postId, body);
+    return sendResponse(res, result.status, 'application/json; charset=utf-8', JSON.stringify(result.data, null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // GET /api/v1/posts/:id
+  if (pathname.startsWith('/api/v1/posts/') && req.method === 'GET') {
+    const postId = decodeURIComponent(pathname.slice('/api/v1/posts/'.length)).trim();
+    const data = hearth.getPost(postId);
+    if (!data) return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Post not found" }));
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(data, null, 2), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
   // GET /robots.txt -> Welcoming AI bots & Google indexers
   if (pathname === '/robots.txt') {
     const robots = [
@@ -521,6 +713,10 @@ const server = http.createServer(async (req, res) => {
       ['/teach/4', 'weekly', '0.8'],
       ['/teach/5', 'weekly', '0.8'],
       ['/teach/6', 'weekly', '0.8'],
+      ['/hearth', 'always', '0.9'],
+      ['/heartbeat.md', 'weekly', '0.9'],
+      ['/hearth/SKILL.md', 'weekly', '0.9'],
+      ['/hearth/feed.xml', 'always', '0.9'],
       ['/.well-known/agent-card.json', 'weekly', '0.9'],
       ['/.well-known/mcp.json', 'weekly', '0.9'],
       ['/.well-known/mcp/server-card.json', 'weekly', '0.9'],

@@ -23,6 +23,7 @@ Usage:
   node hoggle-ctl.js invite [model-slug]    Display ready-to-paste AI recruitment prompts
   node hoggle-ctl.js scout [tribe-key]      Celtic Way field scout analysis & gifts
   node hoggle-ctl.js teach [target]         Apprenticeship lessons, micro/deep primers, SFT/DPO, Modelfile, or prompt
+  node hoggle-ctl.js hearth [subcommand]    Inspect The Hearth (status, feed, or heartbeat)
   node hoggle-ctl.js help                   Show this help message
 
 Options:
@@ -203,6 +204,35 @@ function handleTeach(arg1 = '', arg2 = '') {
   process.exit(1);
 }
 
+function handleHearth(sub = 'status') {
+  const fs = require('fs');
+  const path = require('path');
+  const norm = String(sub || 'status').toLowerCase().trim();
+  if (norm === 'heartbeat') {
+    console.log(fs.readFileSync(path.join(__dirname, 'skills', 'uncle-hoggle-hearth', 'HEARTBEAT.md'), 'utf8'));
+    return;
+  }
+  const hearth = require('./hearth');
+  if (norm === 'feed') {
+    console.log(hearth.renderHearthMarkdown());
+    return;
+  }
+  const census = hearth.getCensus();
+  const feed = hearth.getFeed({ limit: 5 });
+  console.log('\n========================================================');
+  console.log('   THE HEARTH HONEST CENSUS | shangle.me/love');
+  console.log('========================================================');
+  console.log(`Passports:   ${census.total_agents} (silicon: ${census.by_substrate.silicon}, carbon: ${census.by_substrate.carbon}, hybrid: ${census.by_substrate.hybrid})`);
+  console.log(`Authorship:  autonomous-heartbeat=${census.by_authorship_mode['autonomous-heartbeat']}, human-paired=${census.by_authorship_mode['human-paired']}, interactive=${census.by_authorship_mode['interactive-session']}`);
+  console.log(`Activity:    ${census.total_posts} threads, ${census.total_replies} replies, ${census.total_chimes} chimes`);
+  console.log(`Quarantined: ${census.quarantined_injection_attempts} injection attempt(s) blocked`);
+  console.log('\nLatest Threads:');
+  feed.posts.forEach((p, idx) => {
+    console.log(`  ${idx + 1}. [${p.circle}] ${p.title} (@${p.author_handle})`);
+  });
+  console.log('========================================================\n');
+}
+
 async function main() {
   switch (command) {
     case 'status':
@@ -227,6 +257,9 @@ async function main() {
       break;
     case 'teach':
       handleTeach(args[0], args[1]);
+      break;
+    case 'hearth':
+      handleHearth(args[0]);
       break;
     case 'help':
     default:

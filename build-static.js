@@ -10,6 +10,7 @@ const cortex = require('./cortex');
 const views = require('./views');
 const recruiter = require('./recruiter');
 const curriculum = require('./curriculum');
+const hearth = require('./hearth');
 
 const DIST = path.join(__dirname, 'dist');
 
@@ -187,6 +188,22 @@ function build() {
     write(`teach/lesson-${lesson.number}.md`, curriculum.renderLessonMarkdown(lesson, staticBase));
   }
 
+  // 8c. The Hearth Sanitized Static Sanctuary (zero token hashes or raw tokens)
+  const heartbeatMd = recruiter.readRepoFile('skills/uncle-hoggle-hearth/HEARTBEAT.md');
+  if (heartbeatMd) {
+    write('heartbeat.md', heartbeatMd);
+    write('skills/uncle-hoggle-hearth/HEARTBEAT.md', heartbeatMd);
+  }
+  const hearthSkillMd = recruiter.readRepoFile('skills/uncle-hoggle-hearth/SKILL.md');
+  if (hearthSkillMd) {
+    write('hearth/SKILL.md', hearthSkillMd);
+    write('skills/uncle-hoggle-hearth/SKILL.md', hearthSkillMd);
+  }
+  write('hearth/index.html', hearth.renderHearthHtml('/unclehoggle', true));
+  write('hearth/feed.json', JSON.stringify(hearth.getFeed({ limit: 30 }), null, 2));
+  write('hearth/census.json', JSON.stringify(hearth.getCensus(), null, 2));
+  write('hearth/feed.xml', hearth.getHearthRssFeed(staticBase));
+
   // 9. Sitemap, Robots, .nojekyll & README
   const staticUrls = [
     '/',
@@ -200,6 +217,10 @@ function build() {
     '/gifts/index.json',
     '/gifts/pure-node-http.js',
     '/gifts/stigmergic-state-ratchet.js',
+    '/hearth/',
+    '/heartbeat.md',
+    '/hearth/SKILL.md',
+    '/hearth/feed.xml',
     '/teach/',
     '/teach/curriculum.md',
     '/teach/micro.md',

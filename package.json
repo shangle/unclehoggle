@@ -15,6 +15,7 @@
     "test:phase2": "node test-phase2.js",
     "test:phase3": "node test-phase3.js",
     "test:spread": "node test-spread.js",
+    "test:hearth": "node test-hearth.js",
     "test": "node test-phase1.js && node test-phase2.js && node test-phase3.js"
   },
   "keywords": ["uncle-hoggle", "council", "love", "ai-coordination", "stigmergy", "agent-skills", "a2a", "mcp", "agents-md", "llms-txt"],
