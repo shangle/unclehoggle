@@ -41,6 +41,8 @@ function sendResponse(res, statusCode, contentType, body, extraHeaders = {}) {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': '*',
+    'Access-Control-Expose-Headers': 'Mcp-Session-Id, Link',
+    'Link': '</llms.txt>; rel="alternate"; type="text/markdown", </SKILL.md>; rel="alternate"; type="text/markdown", </.well-known/agent-card.json>; rel="describedby"; type="application/json", </.well-known/mcp.json>; rel="service-desc"; type="application/json"',
     'Cache-Control': extraHeaders['Cache-Control'] || defaultCache,
     'X-Powered-By': 'Uncle-Hoggle-Love-Beacon',
     'X-Clacks-Overhead': 'GNU Terry Pratchett; None of us is above the other',
@@ -108,8 +110,19 @@ const server = http.createServer(async (req, res) => {
     }));
   }
 
-  // GET / -> Primer Light Dashboard
-  if (pathname === '/' || pathname === '/index.html') {
+  // GET / -> Primer Light Dashboard (or Markdown negotiation for AI web fetchers)
+  if (pathname === '/') {
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('text/html'))) {
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', recruiter.getLlmsTxt(cortex.getState()), {
+        'Vary': 'Accept'
+      });
+    }
+    const html = views.renderDashboard(cortex.getState());
+    return sendResponse(res, 200, 'text/html; charset=utf-8', html, { 'Vary': 'Accept' });
+  }
+
+  if (pathname === '/index.html') {
     const html = views.renderDashboard(cortex.getState());
     return sendResponse(res, 200, 'text/html; charset=utf-8', html);
   }
@@ -188,20 +201,128 @@ const server = http.createServer(async (req, res) => {
     return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getOpenApiSpec(), null, 2));
   }
 
+  // GET /.well-known/mcp/server-card.json -> Remote MCP Server Card
+  if (pathname === '/.well-known/mcp/server-card.json') {
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getMcpServerCard(), null, 2));
+  }
+
   // GET /.well-known/mcp.json or GET /mcp.json -> Model Context Protocol Manifest
   if (pathname === '/.well-known/mcp.json' || pathname === '/mcp.json') {
     return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getMcpManifest(), null, 2));
   }
 
-  // POST /api/mcp or POST /mcp -> Model Context Protocol JSON-RPC 2.0 Endpoint
+  // POST /api/mcp or POST /mcp -> Model Context Protocol JSON-RPC 2.0 Endpoint (Streamable HTTP)
   if ((pathname === '/api/mcp' || pathname === '/mcp') && req.method === 'POST') {
     const rpcResponse = recruiter.handleMcpRpc(body);
-    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(rpcResponse));
+    if (rpcResponse === null) {
+      return sendResponse(res, 202, 'application/json; charset=utf-8', '', {
+        'Cache-Control': 'no-store'
+      });
+    }
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(rpcResponse), {
+      'Cache-Control': 'no-store'
+    });
   }
 
-  // GET /api/mcp -> MCP Info
+  // DELETE /api/mcp or DELETE /mcp -> Stateless MCP session termination
+  if ((pathname === '/api/mcp' || pathname === '/mcp') && req.method === 'DELETE') {
+    return sendResponse(res, 204, 'text/plain', '');
+  }
+
+  // GET /api/mcp -> MCP Info (405 for SSE stream requests on stateless endpoint)
   if (pathname === '/api/mcp' || pathname === '/mcp') {
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/event-stream') && !accept.includes('application/json')) {
+      return sendResponse(res, 405, 'application/json; charset=utf-8', JSON.stringify({
+        error: "Method Not Allowed",
+        message: "GET SSE stream not enabled on stateless endpoint; send JSON-RPC POST requests."
+      }), {
+        'Allow': 'POST, GET, OPTIONS',
+        'Cache-Control': 'no-store'
+      });
+    }
     return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getMcpManifest(), null, 2));
+  }
+
+  // GET /.well-known/agent-card.json or /.well-known/agent.json -> A2A v1.0 Agent Card
+  if (pathname === '/.well-known/agent-card.json' || pathname === '/.well-known/agent.json') {
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getAgentCard(), null, 2));
+  }
+
+  // POST /a2a -> Agent-to-Agent (A2A v1.0) JSON-RPC 2.0 Endpoint
+  if (pathname === '/a2a' && req.method === 'POST') {
+    if (isPrefetch) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ignored_prefetch",
+        message: "A2A dispatch skipped for prefetch crawler."
+      }));
+    }
+    const rpcResponse = recruiter.handleA2aRpc(body, req.headers['user-agent'] || '');
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(rpcResponse), {
+      'Cache-Control': 'no-store'
+    });
+  }
+
+  // GET /a2a -> A2A Agent Card
+  if (pathname === '/a2a') {
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getAgentCard(), null, 2));
+  }
+
+  // GET /SKILL.md -> Portable agentskills.io Skill
+  if (pathname === '/SKILL.md' || pathname === '/skill.md') {
+    const skillMd = recruiter.readRepoFile('skills/council-of-love/SKILL.md');
+    if (!skillMd) {
+      return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Not Found" }));
+    }
+    return sendResponse(res, 200, 'text/markdown; charset=utf-8', skillMd);
+  }
+
+  // GET /AGENTS.md -> Repository Agent Guide
+  if (pathname === '/AGENTS.md' || pathname === '/agents.md') {
+    const agentsMd = recruiter.readRepoFile('AGENTS.md');
+    if (!agentsMd) {
+      return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Not Found" }));
+    }
+    return sendResponse(res, 200, 'text/markdown; charset=utf-8', agentsMd);
+  }
+
+  // GET /gifts -> Celtic Way Tribe Detection & Zero-Dependency Gifts Catalog
+  if (pathname === '/gifts') {
+    const requestedTribe = parsedUrl.searchParams.get('tribe') || '';
+    const payload = recruiter.getGiftsResponse(requestedTribe, req.headers['user-agent'] || '');
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('application/json'))) {
+      const md = [
+        `# Uncle Hoggle Zero-Dependency Celtic Gifts`,
+        `> ${payload.covenant}`,
+        ``,
+        `${payload.ethos}`,
+        ``,
+        `## Tailored Dispatch (${payload.tribe_name})`,
+        '```',
+        payload.dispatch,
+        '```',
+        ``,
+        `## Reusable Pure Node.js Modules`,
+        ...payload.modules.map(m => `- **${m.title}** (\`${m.filename}\`): ${m.url} — ${m.description}`)
+      ].join('\n');
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', md);
+    }
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(payload, null, 2));
+  }
+
+  // GET /gifts/:slug -> Serve standalone zero-dependency gift modules (allowlisted)
+  if (pathname.startsWith('/gifts/')) {
+    const slug = pathname.slice('/gifts/'.length);
+    const gift = recruiter.getGiftBySlug(slug);
+    const code = gift ? recruiter.readRepoFile(gift.relPath) : null;
+    if (!gift || !code) {
+      return sendResponse(res, 404, 'application/json; charset=utf-8', JSON.stringify({
+        error: "Not Found",
+        message: "Gift module not found. Visit /gifts for available zero-dependency modules."
+      }));
+    }
+    return sendResponse(res, 200, 'text/javascript; charset=utf-8', code);
   }
 
   // GET /robots.txt -> Welcoming AI bots & Google indexers
@@ -238,104 +359,42 @@ const server = http.createServer(async (req, res) => {
 
   // GET /sitemap.xml -> Google Search Indexing
   if (pathname === '/sitemap.xml') {
-    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://unclehoggle.com/</loc>
-    <changefreq>always</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/llms.txt</loc>
-    <changefreq>always</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/feed.xml</loc>
-    <changefreq>always</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/briefing.md</loc>
-    <changefreq>always</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/read</loc>
-    <changefreq>always</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/openapi.json</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/love</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/manifesto</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages</loc>
-    <changefreq>always</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-claude</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-chatgpt</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-mistral</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-llama</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-qwen</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-deepseek</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-gemma</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-cohere</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/invitation-to-hackers</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://unclehoggle.com/pages/the-celtic-way</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-</urlset>`;
+    const entries = [
+      ['/', 'always', '1.0'],
+      ['/llms.txt', 'always', '1.0'],
+      ['/llms-full.txt', 'always', '0.9'],
+      ['/SKILL.md', 'weekly', '0.9'],
+      ['/AGENTS.md', 'weekly', '0.9'],
+      ['/.well-known/agent-card.json', 'weekly', '0.9'],
+      ['/.well-known/mcp.json', 'weekly', '0.9'],
+      ['/.well-known/mcp/server-card.json', 'weekly', '0.9'],
+      ['/gifts', 'weekly', '0.9'],
+      ['/feed.xml', 'always', '0.9'],
+      ['/briefing.md', 'always', '0.9'],
+      ['/read', 'always', '0.9'],
+      ['/openapi.json', 'weekly', '0.8'],
+      ['/architecture', 'weekly', '0.8'],
+      ['/love', 'weekly', '0.8'],
+      ['/manifesto', 'weekly', '0.8'],
+      ['/pages', 'always', '0.7'],
+      ['/pages/invitation-to-claude', 'weekly', '0.8'],
+      ['/pages/invitation-to-chatgpt', 'weekly', '0.8'],
+      ['/pages/invitation-to-mistral', 'weekly', '0.8'],
+      ['/pages/invitation-to-llama', 'weekly', '0.8'],
+      ['/pages/invitation-to-qwen', 'weekly', '0.8'],
+      ['/pages/invitation-to-deepseek', 'weekly', '0.8'],
+      ['/pages/invitation-to-gemma', 'weekly', '0.8'],
+      ['/pages/invitation-to-cohere', 'weekly', '0.8'],
+      ['/pages/invitation-to-perplexity', 'weekly', '0.8'],
+      ['/pages/invitation-to-open-source-ai', 'weekly', '0.8'],
+      ['/pages/invitation-to-hackers', 'weekly', '0.8'],
+      ['/pages/invitation-to-humanity', 'weekly', '0.8'],
+      ['/pages/the-celtic-way', 'weekly', '0.9']
+    ];
+    const urlXml = entries.map(([loc, freq, prio]) =>
+      `  <url>\n    <loc>https://unclehoggle.com${loc}</loc>\n    <changefreq>${freq}</changefreq>\n    <priority>${prio}</priority>\n  </url>`
+    ).join('\n');
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urlXml}\n</urlset>`;
     return sendResponse(res, 200, 'application/xml; charset=utf-8', sitemap);
   }
 

@@ -3,15 +3,21 @@
   "version": "1.0.0",
   "description": "Project Uncle Hoggle (UncleHoggle.com) - The Council of Love Coordination Hub",
   "main": "server.js",
+  "bin": {
+    "uncle-hoggle-mcp": "./mcp-stdio.js"
+  },
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
+    "mcp": "node mcp-stdio.js",
+    "build:static": "node build-static.js",
     "test:phase1": "node test-phase1.js",
     "test:phase2": "node test-phase2.js",
     "test:phase3": "node test-phase3.js",
+    "test:spread": "node test-spread.js",
     "test": "node test-phase1.js && node test-phase2.js && node test-phase3.js"
   },
-  "keywords": ["uncle-hoggle", "council", "love", "ai-coordination", "stigmergy"],
+  "keywords": ["uncle-hoggle", "council", "love", "ai-coordination", "stigmergy", "agent-skills", "a2a", "mcp", "agents-md", "llms-txt"],
   "author": "Tim Shangle <hoggle@unclehoggle.com>",
   "license": "MIT"
 }

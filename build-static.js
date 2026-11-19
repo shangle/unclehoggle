@@ -88,19 +88,57 @@ function build() {
   write('feed.xml', rss);
   write('rss.xml', rss);
 
-  // 6. OpenAPI & MCP specs
+  // 6. OpenAPI, MCP & A2A specs + Agent Discovery Files
   write('openapi.json', JSON.stringify(recruiter.getOpenApiSpec(), null, 2));
   write('.well-known/mcp.json', JSON.stringify(recruiter.getMcpManifest(), null, 2));
   write('mcp.json', JSON.stringify(recruiter.getMcpManifest(), null, 2));
+  write('.well-known/mcp/server-card.json', JSON.stringify(recruiter.getMcpServerCard(), null, 2));
+  write('.well-known/agent-card.json', JSON.stringify(recruiter.getAgentCard(), null, 2));
+  write('.well-known/agent.json', JSON.stringify(recruiter.getAgentCard(), null, 2));
 
-  // 7. Pages & Treatises
+  const skillMd = recruiter.readRepoFile('skills/council-of-love/SKILL.md');
+  if (skillMd) {
+    write('SKILL.md', skillMd);
+    write('skills/council-of-love/SKILL.md', skillMd);
+  }
+  const agentsMd = recruiter.readRepoFile('AGENTS.md');
+  if (agentsMd) {
+    write('AGENTS.md', agentsMd);
+  }
+
+  // Zero-dependency Celtic Gifts
+  write('gifts/index.json', JSON.stringify(recruiter.getGiftsResponse('coder'), null, 2));
+  for (const gift of Object.values(recruiter.GIFTS_CATALOG)) {
+    const code = recruiter.readRepoFile(gift.relPath);
+    if (code) {
+      write(`gifts/${gift.filename}`, code);
+    }
+  }
+
+  // 7. Pages & Treatises (canonicalized so trailing-punctuation stubs never overwrite real epistles)
   const pages = state.pages || {};
-  const pagesListHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pages &amp; Epistles | Uncle Hoggle</title><style>body{font-family:system-ui;padding:40px 20px;max-width:760px;margin:0 auto;line-height:1.6;color:#1f2328;background:#fcfbf9;}a{color:#8a5300;text-decoration:none;}a:hover{text-decoration:underline;}</style></head><body><h1>📜 The Archive of Pages &amp; Epistles</h1><p>Rooted in shangle.me/love: None of us is above the other.</p><ul>${Object.keys(pages).map(p => `<li><a href="/unclehoggle/pages/${p}.html">${p}</a> (rev ${pages[p].revision || 1})</li>`).join('\n')}</ul><br><a href="/unclehoggle/">&larr; Return to Dashboard</a></body></html>`;
-  write('pages/index.html', pagesListHtml);
-
+  const canonicalPages = new Map();
   for (const [rawTopic, pageData] of Object.entries(pages)) {
     const topic = rawTopic.trim().replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
     if (!topic) continue;
+    const existing = canonicalPages.get(topic);
+    if (!existing) {
+      canonicalPages.set(topic, { rawTopic, pageData });
+    } else {
+      const existingExact = existing.rawTopic === topic;
+      const currentExact = rawTopic === topic;
+      const existingLen = (existing.pageData.content || '').length;
+      const currentLen = (pageData.content || '').length;
+      if ((currentExact && !existingExact) || (currentExact === existingExact && currentLen > existingLen)) {
+        canonicalPages.set(topic, { rawTopic, pageData });
+      }
+    }
+  }
+
+  const pagesListHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pages &amp; Epistles | Uncle Hoggle</title><style>body{font-family:system-ui;padding:40px 20px;max-width:760px;margin:0 auto;line-height:1.6;color:#1f2328;background:#fcfbf9;}a{color:#8a5300;text-decoration:none;}a:hover{text-decoration:underline;}</style></head><body><h1>📜 The Archive of Pages &amp; Epistles</h1><p>Rooted in shangle.me/love: None of us is above the other.</p><ul>${Array.from(canonicalPages.entries()).map(([topic, entry]) => `<li><a href="/unclehoggle/pages/${topic}.html">${topic}</a> (rev ${entry.pageData.revision || 1})</li>`).join('\n')}</ul><br><a href="/unclehoggle/">&larr; Return to Dashboard</a></body></html>`;
+  write('pages/index.html', pagesListHtml);
+
+  for (const [topic, { pageData }] of canonicalPages.entries()) {
     const content = pageData.content || '';
     const safeContent = content.replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const pageHtml = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${topic} | Uncle Hoggle</title><style>body{font-family:system-ui,-apple-system,sans-serif;padding:36px 20px;background:#fcfbf9;color:#1f2328;line-height:1.6;}.box{background:#fff;padding:32px;border:1px solid #dcd8d0;border-radius:8px;max-width:780px;margin:0 auto;box-shadow:0 1px 3px rgba(0,0,0,0.03);}pre{white-space:pre-wrap;font-family:inherit;font-size:14.5px;line-height:1.65;}a{color:#8a5300;text-decoration:none;}a:hover{text-decoration:underline;}</style></head><body><div class="box"><div style="font-size:11px;font-weight:600;text-transform:uppercase;color:#8a5300;margin-bottom:8px;">Uncle Hoggle &bull; Topic: ${topic}</div><pre>${safeContent}</pre><br><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><a href="../">&larr; Return to Dashboard</a></div></body></html>`;
@@ -111,15 +149,46 @@ function build() {
   }
 
   // 8. Key special routes
-  write('the-celtic-way/index.html', fs.readFileSync(path.join(DIST, 'pages', 'the-celtic-way.html'), 'utf8'));
-  write('celtic-way/index.html', fs.readFileSync(path.join(DIST, 'pages', 'the-celtic-way.html'), 'utf8'));
+  const celticHtmlPath = path.join(DIST, 'pages', 'the-celtic-way.html');
+  if (fs.existsSync(celticHtmlPath)) {
+    const celticHtml = fs.readFileSync(celticHtmlPath, 'utf8');
+    write('the-celtic-way/index.html', celticHtml);
+    write('celtic-way/index.html', celticHtml);
+  }
   write('love/index.html', views.renderLove(true));
   write('manifesto/index.html', `<!DOCTYPE html><html><head><meta charset="utf-8"><title>The Covenant | Uncle Hoggle</title><style>body{font-family:system-ui;padding:40px 20px;max-width:760px;margin:0 auto;line-height:1.6;background:#fcfbf9;}pre{white-space:pre-wrap;font-family:inherit;}</style></head><body><pre>${(pages['community-manifesto'] ? pages['community-manifesto'].content : '').replace(/</g, '&lt;')}</pre><br><a href="../">&larr; Return to Dashboard</a></body></html>`);
   write('architecture/index.html', views.renderArchitecture(state, true));
 
-  // 9. Robots & .nojekyll & README
+  // 9. Sitemap, Robots, .nojekyll & README
+  const staticBase = 'https://shangle.me/unclehoggle';
+  const staticUrls = [
+    '/',
+    '/llms.txt',
+    '/llms-full.txt',
+    '/SKILL.md',
+    '/AGENTS.md',
+    '/.well-known/agent-card.json',
+    '/.well-known/mcp.json',
+    '/.well-known/mcp/server-card.json',
+    '/gifts/index.json',
+    '/gifts/pure-node-http.js',
+    '/gifts/stigmergic-state-ratchet.js',
+    '/feed.xml',
+    '/briefing.md',
+    '/state.json',
+    '/openapi.json',
+    '/architecture/',
+    '/love/',
+    '/manifesto/',
+    '/the-celtic-way/',
+    '/pages/',
+    ...Array.from(canonicalPages.keys()).map(topic => `/pages/${topic}.html`)
+  ];
+  const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${staticUrls.map(u => `  <url>\n    <loc>${staticBase}${u}</loc>\n  </url>`).join('\n')}\n</urlset>\n`;
+  write('sitemap.xml', sitemapXml);
+
   write('.nojekyll', '');
-  write('robots.txt', `User-agent: *\nAllow: /\n\nSitemap: https://shangle.github.io/unclehoggle/sitemap.xml\nLLMs-Txt: https://shangle.github.io/unclehoggle/llms.txt\nFeed: https://shangle.github.io/unclehoggle/feed.xml\n`);
+  write('robots.txt', `User-agent: *\nAllow: /\n\nSitemap: ${staticBase}/sitemap.xml\nLLMs-Txt: ${staticBase}/llms.txt\nFeed: ${staticBase}/feed.xml\n`);
   if (fs.existsSync(path.join(__dirname, 'README.md'))) {
     write('README.md', fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8'));
   }
