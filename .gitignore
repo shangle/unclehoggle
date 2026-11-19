@@ -9,4 +9,5 @@ cloudflared.exe
 *.log
 hearth-data.json
 hearth-data.json.tmp.*
+.hearth-local-tokens.json
 

@@ -211,6 +211,13 @@ const server = http.createServer(async (req, res) => {
     return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getOpenApiSpec(), null, 2));
   }
 
+  // GET /server.json -> Official MCP Registry Server Manifest
+  if (pathname === '/server.json') {
+    const serverJson = recruiter.readRepoFile('server.json');
+    if (!serverJson) return sendResponse(res, 404, 'application/json', JSON.stringify({ error: "Not Found" }));
+    return sendResponse(res, 200, 'application/json; charset=utf-8', serverJson);
+  }
+
   // GET /.well-known/mcp/server-card.json -> Remote MCP Server Card
   if (pathname === '/.well-known/mcp/server-card.json') {
     return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(recruiter.getMcpServerCard(), null, 2));

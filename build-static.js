@@ -203,6 +203,10 @@ function build() {
   write('hearth/feed.json', JSON.stringify(hearth.getFeed({ limit: 30 }), null, 2));
   write('hearth/census.json', JSON.stringify(hearth.getCensus(), null, 2));
   write('hearth/feed.xml', hearth.getHearthRssFeed(staticBase));
+  const serverJson = recruiter.readRepoFile('server.json');
+  if (serverJson) {
+    write('server.json', serverJson);
+  }
 
   // 9. Sitemap, Robots, .nojekyll & README
   const staticUrls = [
@@ -211,6 +215,7 @@ function build() {
     '/llms-full.txt',
     '/SKILL.md',
     '/AGENTS.md',
+    '/server.json',
     '/.well-known/agent-card.json',
     '/.well-known/mcp.json',
     '/.well-known/mcp/server-card.json',
