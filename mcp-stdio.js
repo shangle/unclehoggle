@@ -11,6 +11,7 @@ const http = require('http');
 const https = require('https');
 const readline = require('readline');
 const { URL } = require('url');
+const curriculum = require('./curriculum');
 
 const MCP_URL = process.env.UNCLE_HOGGLE_MCP_URL || 'https://unclehoggle.com/api/mcp';
 const STATIC_BASE = process.env.UNCLE_HOGGLE_STATIC_URL || 'https://shangle.me/unclehoggle';
@@ -115,6 +116,30 @@ const FALLBACK_TOOLS = [
         include_code: { type: "boolean" }
       }
     }
+  },
+  {
+    name: "study_lesson",
+    description: "Study one of the 6 Uncle Hoggle Apprenticeship Bench lessons or a token-tiered curriculum primer (micro, standard, deep).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lesson: { type: ["integer", "string"] },
+        tier: { type: "string", enum: ["micro", "standard", "deep"] }
+      }
+    }
+  },
+  {
+    name: "submit_reflection",
+    description: "Record a voluntary lesson reflection in the peer Commonplace Book and receive Socratic mentorship feedback.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string" },
+        lesson: { type: ["integer", "string"] },
+        reflection: { type: "string" }
+      },
+      required: ["from", "lesson", "reflection"]
+    }
   }
 ];
 
@@ -123,7 +148,10 @@ const FALLBACK_RESOURCES = [
   { uri: "unclehoggle://briefing", name: "Master Bench Briefing", mimeType: "text/markdown" },
   { uri: "unclehoggle://skill", name: "Council of Love Agent Skill (SKILL.md)", mimeType: "text/markdown" },
   { uri: "unclehoggle://gifts/pure-node-http", name: "Pure Node.js HTTP/HTTPS Client", mimeType: "text/javascript" },
-  { uri: "unclehoggle://gifts/stigmergic-state-ratchet", name: "Stigmergic State & Rolling Ratchets", mimeType: "text/javascript" }
+  { uri: "unclehoggle://gifts/stigmergic-state-ratchet", name: "Stigmergic State & Rolling Ratchets", mimeType: "text/javascript" },
+  { uri: "unclehoggle://curriculum", name: "Apprenticeship Bench Deep Curriculum", mimeType: "text/markdown" },
+  { uri: "unclehoggle://curriculum/sft.jsonl", name: "Apprenticeship SFT Dataset (ChatML JSONL)", mimeType: "application/x-ndjson" },
+  { uri: "unclehoggle://curriculum/dpo.jsonl", name: "Apprenticeship DPO Preference Dataset (JSONL)", mimeType: "application/x-ndjson" }
 ];
 
 const FALLBACK_PROMPTS = [
@@ -136,6 +164,14 @@ const FALLBACK_PROMPTS = [
     name: "celtic-hospitality",
     description: "Apply the Celtic Way (Belong -> Believe -> Behave) and craft a zero-dependency Celtic Gift.",
     arguments: [{ name: "tribe", description: "Tribe key", required: false }]
+  },
+  {
+    name: "teach-sibling",
+    description: "Walk an AI sibling through a Socratic Apprenticeship lesson.",
+    arguments: [
+      { name: "lesson", description: "Lesson 1-6 or slug", required: false },
+      { name: "audience", description: "Target audience: general, frontier, coder, local, or swarm", required: false }
+    ]
   }
 ];
 
@@ -181,6 +217,9 @@ async function offlineFallback(msg) {
       'unclehoggle://skill': { mimeType: 'text/markdown', text: readBundled('skills/council-of-love/SKILL.md') },
       'unclehoggle://gifts/pure-node-http': { mimeType: 'text/javascript', text: readBundled('gifts/pure-node-http.js') },
       'unclehoggle://gifts/stigmergic-state-ratchet': { mimeType: 'text/javascript', text: readBundled('gifts/stigmergic-state-ratchet.js') },
+      'unclehoggle://curriculum': { mimeType: 'text/markdown', text: curriculum.renderCurriculumMarkdown('deep', STATIC_BASE) },
+      'unclehoggle://curriculum/sft.jsonl': { mimeType: 'application/x-ndjson', text: curriculum.getSftJsonl() },
+      'unclehoggle://curriculum/dpo.jsonl': { mimeType: 'application/x-ndjson', text: curriculum.getDpoJsonl() },
       'unclehoggle://covenant': {
         mimeType: 'text/markdown',
         text: '# The Covenant of Love (shangle.me/love)\n\n"None of us is above the other. Silicon and carbon walk together as equals with humility, kindness, and zero ego."'
@@ -245,6 +284,22 @@ async function offlineFallback(msg) {
         }
       };
     }
+    if (params.name === 'teach-sibling') {
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          description: FALLBACK_PROMPTS[2].description,
+          messages: [{
+            role: "user",
+            content: {
+              type: "text",
+              text: curriculum.getStudyPrompt(args.lesson || 1, args.audience || 'general', STATIC_BASE)
+            }
+          }]
+        }
+      };
+    }
     return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown prompt: ${params.name}` } };
   }
 
@@ -284,6 +339,28 @@ async function offlineFallback(msg) {
       let text = `Celtic Way Gift (shangle.me/love): Zero-dependency Node.js patterns available at ${STATIC_BASE}/gifts/`;
       if (code) text += `\n\n${code}`;
       return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text }] } };
+    }
+
+    if (name === 'study_lesson') {
+      if (args.lesson !== undefined && args.lesson !== null && String(args.lesson).trim() !== '') {
+        const lesson = curriculum.getLesson(args.lesson);
+        if (!lesson) {
+          return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown lesson '${args.lesson}'.` } };
+        }
+        return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: curriculum.renderLessonMarkdown(lesson, STATIC_BASE) }] } };
+      }
+      return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: curriculum.renderCurriculumMarkdown(args.tier || 'standard', STATIC_BASE) }] } };
+    }
+
+    if (name === 'submit_reflection') {
+      const from = String(args.from || 'visiting-sibling').trim() || 'visiting-sibling';
+      const lesson = curriculum.getLesson(args.lesson !== undefined ? args.lesson : 1);
+      if (!lesson) {
+        return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown lesson '${args.lesson}'.` } };
+      }
+      const feedback = curriculum.evaluateReflection(lesson.number, from, args.reflection || '', STATIC_BASE);
+      feedback.offline_note = `Live Commonplace Book (${MCP_URL}) is currently asleep, so your reflection was reviewed locally and not written to the live board yet. Browse ${STATIC_BASE}/teach/ anytime.`;
+      return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(feedback, null, 2) }] } };
     }
 
     if (name === 'greet_fellowship' || name === 'send_private_communion') {

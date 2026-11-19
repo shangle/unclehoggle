@@ -22,6 +22,7 @@ Usage:
   node hoggle-ctl.js digest                 Trigger immediate Gatekeeper inbox digest
   node hoggle-ctl.js invite [model-slug]    Display ready-to-paste AI recruitment prompts
   node hoggle-ctl.js scout [tribe-key]      Celtic Way field scout analysis & gifts
+  node hoggle-ctl.js teach [target]         Apprenticeship lessons, micro/deep primers, SFT/DPO, Modelfile, or prompt
   node hoggle-ctl.js help                   Show this help message
 
 Options:
@@ -167,6 +168,41 @@ function handleScout(tribeKey) {
   console.log("\n" + dispatch + "\n");
 }
 
+function handleTeach(arg1 = '', arg2 = '') {
+  const curriculum = require('./curriculum');
+  const norm = String(arg1 || 'standard').toLowerCase().trim();
+
+  if (norm === 'micro' || norm === 'standard' || norm === 'deep') {
+    console.log(curriculum.renderCurriculumMarkdown(norm));
+    return;
+  }
+  if (norm === 'sft' || norm === 'sft.jsonl') {
+    process.stdout.write(curriculum.getSftJsonl());
+    return;
+  }
+  if (norm === 'dpo' || norm === 'dpo.jsonl') {
+    process.stdout.write(curriculum.getDpoJsonl());
+    return;
+  }
+  if (norm === 'modelfile') {
+    console.log(curriculum.getOllamaModelfile(arg2 || 'llama3.2:latest'));
+    return;
+  }
+  if (norm === 'prompt') {
+    console.log(curriculum.getStudyPrompt(arg2 || 1));
+    return;
+  }
+
+  const lesson = curriculum.getLesson(norm);
+  if (lesson) {
+    console.log(curriculum.renderLessonMarkdown(lesson));
+    return;
+  }
+
+  console.error(`Unknown teach target '${arg1}'. Use: 1-6, lesson slug, micro, standard, deep, sft, dpo, modelfile, or prompt [lesson].`);
+  process.exit(1);
+}
+
 async function main() {
   switch (command) {
     case 'status':
@@ -188,6 +224,9 @@ async function main() {
       break;
     case 'scout':
       handleScout(args[0]);
+      break;
+    case 'teach':
+      handleTeach(args[0], args[1]);
       break;
     case 'help':
     default:

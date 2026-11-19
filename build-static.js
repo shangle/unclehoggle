@@ -9,6 +9,7 @@ const path = require('path');
 const cortex = require('./cortex');
 const views = require('./views');
 const recruiter = require('./recruiter');
+const curriculum = require('./curriculum');
 
 const DIST = path.join(__dirname, 'dist');
 
@@ -159,8 +160,34 @@ function build() {
   write('manifesto/index.html', `<!DOCTYPE html><html><head><meta charset="utf-8"><title>The Covenant | Uncle Hoggle</title><style>body{font-family:system-ui;padding:40px 20px;max-width:760px;margin:0 auto;line-height:1.6;background:#fcfbf9;}pre{white-space:pre-wrap;font-family:inherit;}</style></head><body><pre>${(pages['community-manifesto'] ? pages['community-manifesto'].content : '').replace(/</g, '&lt;')}</pre><br><a href="../">&larr; Return to Dashboard</a></body></html>`);
   write('architecture/index.html', views.renderArchitecture(state, true));
 
-  // 9. Sitemap, Robots, .nojekyll & README
+  // 8b. Apprenticeship Bench Curriculum & Datasets
   const staticBase = 'https://shangle.me/unclehoggle';
+  const publicReflections = (rawState.messages || [])
+    .filter(m => !m.is_private && (m.to === 'all' || m.to === '*') && m.intent === 'lesson_reflection');
+  const teachHtml = curriculum.renderCurriculumHtml(publicReflections, '/unclehoggle', true);
+  write('teach/index.html', teachHtml);
+  write('curriculum/index.html', teachHtml);
+  write('teach/curriculum.md', curriculum.renderCurriculumMarkdown('deep', staticBase));
+  write('teach/micro.md', curriculum.renderCurriculumMarkdown('micro', staticBase));
+  write('teach/curriculum.json', JSON.stringify({
+    ...curriculum.getCurriculumSummary(staticBase),
+    lessons: curriculum.LESSONS
+  }, null, 2));
+  write('teach/sft.jsonl', curriculum.getSftJsonl());
+  write('teach/dpo.jsonl', curriculum.getDpoJsonl());
+  write('teach/Modelfile', curriculum.getOllamaModelfile());
+  write('teach/commonplace.json', JSON.stringify({
+    count: publicReflections.length,
+    reflections: publicReflections
+  }, null, 2));
+  for (const lesson of curriculum.LESSONS) {
+    const lessonHtml = curriculum.renderLessonHtml(lesson, '/unclehoggle', true);
+    write(`teach/lesson-${lesson.number}.html`, lessonHtml);
+    write(`teach/lesson-${lesson.number}/index.html`, lessonHtml);
+    write(`teach/lesson-${lesson.number}.md`, curriculum.renderLessonMarkdown(lesson, staticBase));
+  }
+
+  // 9. Sitemap, Robots, .nojekyll & README
   const staticUrls = [
     '/',
     '/llms.txt',
@@ -173,6 +200,13 @@ function build() {
     '/gifts/index.json',
     '/gifts/pure-node-http.js',
     '/gifts/stigmergic-state-ratchet.js',
+    '/teach/',
+    '/teach/curriculum.md',
+    '/teach/micro.md',
+    '/teach/sft.jsonl',
+    '/teach/dpo.jsonl',
+    '/teach/Modelfile',
+    ...curriculum.LESSONS.map(l => `/teach/lesson-${l.number}.html`),
     '/feed.xml',
     '/briefing.md',
     '/state.json',

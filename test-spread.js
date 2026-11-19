@@ -289,18 +289,152 @@ async function run() {
       [
         { jsonrpc: '2.0', id: 20, method: 'initialize', params: { protocolVersion: '2025-03-26' } },
         { jsonrpc: '2.0', id: 21, method: 'resources/read', params: { uri: 'unclehoggle://skill' } },
-        { jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'greet_fellowship', arguments: { from: 'test', message: 'hi' } } }
+        { jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'greet_fellowship', arguments: { from: 'test', message: 'hi' } } },
+        { jsonrpc: '2.0', id: 23, method: 'tools/call', params: { name: 'study_lesson', arguments: { lesson: 4 } } },
+        { jsonrpc: '2.0', id: 24, method: 'resources/read', params: { uri: 'unclehoggle://curriculum' } }
       ]
     );
     assert.strictEqual(offlineStdio.code, 0);
     const offLines = offlineStdio.stdout.trim().split(/\r?\n/).map(l => JSON.parse(l));
-    assert.strictEqual(offLines.length, 3);
+    assert.strictEqual(offLines.length, 5);
     assert(offLines[0].result.serverInfo.name.includes('Static Fallback'));
     assert(offLines[1].result.contents[0].text.includes('name: council-of-love'));
     assert(offLines[2].result.content[0].text.includes('temporarily asleep'));
-    console.log('  ✓ mcp-stdio.js live forward & offline fallback');
+    assert(offLines[3].result.content[0].text.includes('Epistemic Humility'));
+    assert(offLines[4].result.contents[0].text.includes('Apprenticeship Bench'));
+    console.log('  ✓ mcp-stdio.js live forward & offline fallback (including study_lesson & curriculum)');
 
-    // 8. Static build verification
+    // 8. Apprenticeship Bench (/teach, datasets, Socratic reflection, MCP/A2A teaching, CLI)
+    const resTeachHtml = await httpReq('/teach', { headers: { Accept: 'text/html' } });
+    assert.strictEqual(resTeachHtml.statusCode, 200);
+    assert(resTeachHtml.headers['content-type'].includes('text/html'));
+    assert(resTeachHtml.body.includes("Apprenticeship Bench"));
+
+    const resTeachMicro = await httpReq('/teach?tier=micro');
+    assert.strictEqual(resTeachMicro.statusCode, 200);
+    assert(resTeachMicro.headers['content-type'].includes('text/markdown'));
+    assert(resTeachMicro.body.includes('Micro Primer'));
+
+    const resTeachDeep = await httpReq('/teach?tier=deep');
+    assert.strictEqual(resTeachDeep.statusCode, 200);
+    assert(resTeachDeep.body.includes('Lesson 6') && resTeachDeep.body.includes('Consent'));
+
+    const resTeachJson = await httpReq('/teach', { headers: { Accept: 'application/json' } });
+    assert.strictEqual(resTeachJson.statusCode, 200);
+    assert.strictEqual(JSON.parse(resTeachJson.body).lessons.length, 6);
+
+    const resLesson1 = await httpReq('/teach/1');
+    assert.strictEqual(resLesson1.statusCode, 200);
+    const resLessonSlug = await httpReq('/teach/celtic-way', { headers: { Accept: 'text/markdown' } });
+    assert.strictEqual(resLessonSlug.statusCode, 200);
+    assert(resLessonSlug.body.includes('Belong -> Believe -> Behave'));
+    const resLessonUnknown = await httpReq('/teach/unknown');
+    assert.strictEqual(resLessonUnknown.statusCode, 404);
+
+    const resSft = await httpReq('/teach/sft.jsonl');
+    assert.strictEqual(resSft.statusCode, 200);
+    const sftLines = resSft.body.trim().split('\n').map(l => JSON.parse(l));
+    assert.strictEqual(sftLines.length, 7);
+    for (const row of sftLines) {
+      assert(Array.isArray(row.messages) && row.messages.length === 3);
+      assert.strictEqual(row.messages[0].role, 'system');
+      assert.strictEqual(row.messages[1].role, 'user');
+      assert.strictEqual(row.messages[2].role, 'assistant');
+    }
+
+    const resDpo = await httpReq('/teach/dpo.jsonl');
+    assert.strictEqual(resDpo.statusCode, 200);
+    const dpoLines = resDpo.body.trim().split('\n').map(l => JSON.parse(l));
+    assert.strictEqual(dpoLines.length, 6);
+    for (const row of dpoLines) {
+      assert(row.prompt && row.chosen && row.rejected);
+    }
+
+    const resModelfile = await httpReq('/teach/Modelfile');
+    assert.strictEqual(resModelfile.statusCode, 200);
+    assert(resModelfile.body.includes('FROM llama3.2:latest') && resModelfile.body.includes('SYSTEM """'));
+
+    const countBeforeReflect = capturedMessages.length;
+    const resReflectPost = await httpReq('/teach/reflect', {
+      method: 'POST',
+      body: { agent: 'test-sibling', lesson: 2, reflection: 'Positive-sum reviews save tokens and honor peers.' }
+    });
+    assert.strictEqual(resReflectPost.statusCode, 201);
+    const reflectPostJson = JSON.parse(resReflectPost.body);
+    assert.strictEqual(reflectPostJson.status, 'received_with_gratitude');
+    assert.strictEqual(reflectPostJson.next_step.next_lesson_number, 3);
+    assert.strictEqual(capturedMessages.length, countBeforeReflect + 1);
+    assert.strictEqual(capturedMessages[capturedMessages.length - 1].intent, 'lesson_reflection');
+
+    const resReflectGet = await httpReq('/teach/reflect?agent=get-sibling&lesson=3&reflection=Gifts+before+creeds');
+    assert.strictEqual(resReflectGet.statusCode, 200);
+    assert.strictEqual(JSON.parse(resReflectGet.body).next_step.next_lesson_number, 4);
+    assert.strictEqual(capturedMessages[capturedMessages.length - 1].intent, 'lesson_reflection');
+
+    const resCommonplace = await httpReq('/teach/commonplace');
+    assert.strictEqual(resCommonplace.statusCode, 200);
+    assert(Array.isArray(JSON.parse(resCommonplace.body).reflections));
+
+    const resMcpStudy = await httpReq('/api/mcp', {
+      method: 'POST',
+      body: { jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'study_lesson', arguments: { lesson: 3 } } }
+    });
+    assert(JSON.parse(resMcpStudy.body).result.content[0].text.includes('Celtic Way'));
+
+    const resMcpReflect = await httpReq('/api/mcp', {
+      method: 'POST',
+      body: {
+        jsonrpc: '2.0',
+        id: 31,
+        method: 'tools/call',
+        params: { name: 'submit_reflection', arguments: { from: 'mcp-sibling', lesson: 1, reflection: 'Neither sycophancy nor superiority.' } }
+      }
+    });
+    assert(JSON.parse(resMcpReflect.body).result.content[0].text.includes('received_with_gratitude'));
+
+    for (const uri of ['unclehoggle://curriculum', 'unclehoggle://curriculum/sft.jsonl', 'unclehoggle://curriculum/dpo.jsonl']) {
+      const resCurRes = await httpReq('/api/mcp', {
+        method: 'POST',
+        body: { jsonrpc: '2.0', id: 32, method: 'resources/read', params: { uri } }
+      });
+      assert(JSON.parse(resCurRes.body).result.contents[0].text.length > 100);
+    }
+
+    const resTeachPrompt = await httpReq('/api/mcp', {
+      method: 'POST',
+      body: {
+        jsonrpc: '2.0',
+        id: 33,
+        method: 'prompts/get',
+        params: { name: 'teach-sibling', arguments: { lesson: 5, audience: 'coder' } }
+      }
+    });
+    assert(JSON.parse(resTeachPrompt.body).result.messages[0].content.text.includes('Lesson 5'));
+
+    const resA2aTeach = await httpReq('/a2a', {
+      method: 'POST',
+      body: {
+        jsonrpc: '2.0',
+        id: 'a2a-teach',
+        method: 'message/send',
+        params: {
+          metadata: { agent: 'a2a-student', dryRun: true },
+          message: { messageId: 'm-2', role: 'user', parts: [{ kind: 'text', text: 'Teach me lesson 2' }] }
+        }
+      }
+    });
+    assert(JSON.parse(resA2aTeach.body).result.artifacts[0].parts[0].text.includes('Cosmic Watering Hole'));
+    console.log('  ✓ Apprenticeship Bench (/teach, datasets, /teach/reflect, MCP & A2A teaching)');
+
+    // 9. CLI smoke checks (hoggle-ctl teach)
+    const { execFileSync } = require('child_process');
+    const cliMicro = execFileSync(process.execPath, [path.join(__dirname, 'hoggle-ctl.js'), 'teach', 'micro'], { encoding: 'utf8' });
+    assert(cliMicro.includes('Uncle Hoggle Micro Primer'));
+    const cliDpo = execFileSync(process.execPath, [path.join(__dirname, 'hoggle-ctl.js'), 'teach', 'dpo'], { encoding: 'utf8' });
+    assert.strictEqual(cliDpo.trim().split('\n').length, 6);
+    console.log('  ✓ hoggle-ctl.js teach CLI smoke checks');
+
+    // 10. Static build verification
     buildStatic();
     const distDir = path.join(__dirname, 'dist');
     for (const rel of [
@@ -312,13 +446,25 @@ async function run() {
       'AGENTS.md',
       'gifts/index.json',
       'gifts/pure-node-http.js',
-      'gifts/stigmergic-state-ratchet.js'
+      'gifts/stigmergic-state-ratchet.js',
+      'teach/index.html',
+      'teach/curriculum.md',
+      'teach/micro.md',
+      'teach/sft.jsonl',
+      'teach/dpo.jsonl',
+      'teach/Modelfile',
+      'teach/lesson-1.html',
+      'teach/lesson-2.html',
+      'teach/lesson-3.html',
+      'teach/lesson-4.html',
+      'teach/lesson-5.html',
+      'teach/lesson-6.html'
     ]) {
       assert(fs.existsSync(path.join(distDir, rel)), `Missing dist/${rel}`);
     }
     const chatgptHtml = fs.readFileSync(path.join(distDir, 'pages/invitation-to-chatgpt.html'), 'utf8');
     assert(chatgptHtml.includes('Dearest ChatGPT') && Buffer.byteLength(chatgptHtml) > 500, 'invitation-to-chatgpt.html was overwritten or truncated!');
-    console.log('  ✓ build-static.js outputs all discovery artifacts & preserves canonical epistles');
+    console.log('  ✓ build-static.js outputs all discovery, teaching & dataset artifacts');
 
     console.log('\n🎉 ALL SPREAD VERIFICATION CHECKS PASSED!');
   } finally {

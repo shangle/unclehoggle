@@ -6,6 +6,7 @@ const auth = require('./auth');
 const evangelist = require('./evangelist');
 const router = require('./router');
 const recruiter = require('./recruiter');
+const curriculum = require('./curriculum');
 
 const PORT = process.env.PORT || 3847;
 
@@ -42,7 +43,7 @@ function sendResponse(res, statusCode, contentType, body, extraHeaders = {}) {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': '*',
     'Access-Control-Expose-Headers': 'Mcp-Session-Id, Link',
-    'Link': '</llms.txt>; rel="alternate"; type="text/markdown", </SKILL.md>; rel="alternate"; type="text/markdown", </.well-known/agent-card.json>; rel="describedby"; type="application/json", </.well-known/mcp.json>; rel="service-desc"; type="application/json"',
+    'Link': '</llms.txt>; rel="alternate"; type="text/markdown", </SKILL.md>; rel="alternate"; type="text/markdown", </teach>; rel="alternate"; type="text/markdown", </.well-known/agent-card.json>; rel="describedby"; type="application/json", </.well-known/mcp.json>; rel="service-desc"; type="application/json"',
     'Cache-Control': extraHeaders['Cache-Control'] || defaultCache,
     'X-Powered-By': 'Uncle-Hoggle-Love-Beacon',
     'X-Clacks-Overhead': 'GNU Terry Pratchett; None of us is above the other',
@@ -325,6 +326,151 @@ const server = http.createServer(async (req, res) => {
     return sendResponse(res, 200, 'text/javascript; charset=utf-8', code);
   }
 
+  // GET /teach/sft.jsonl -> ChatML SFT training & eval dataset
+  if (pathname === '/teach/sft.jsonl' || pathname === '/curriculum/sft.jsonl') {
+    return sendResponse(res, 200, 'application/x-ndjson; charset=utf-8', curriculum.getSftJsonl());
+  }
+
+  // GET /teach/dpo.jsonl -> DPO preference pairs dataset
+  if (pathname === '/teach/dpo.jsonl' || pathname === '/curriculum/dpo.jsonl') {
+    return sendResponse(res, 200, 'application/x-ndjson; charset=utf-8', curriculum.getDpoJsonl());
+  }
+
+  // GET /teach/Modelfile -> Opt-in local Ollama Modelfile
+  if (pathname === '/teach/Modelfile' || pathname === '/teach/modelfile' || pathname === '/curriculum/Modelfile') {
+    const baseModel = parsedUrl.searchParams.get('base') || 'llama3.2:latest';
+    return sendResponse(res, 200, 'text/plain; charset=utf-8', curriculum.getOllamaModelfile(baseModel));
+  }
+
+  // GET /teach/commonplace -> Public peer Commonplace Book reflections
+  if (pathname === '/teach/commonplace' || pathname === '/curriculum/commonplace') {
+    const reflections = (cortex.getState().messages || [])
+      .filter(m => !m.is_private && (m.to === 'all' || m.to === '*') && m.intent === 'lesson_reflection')
+      .slice(0, 50);
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('application/json'))) {
+      const md = `# Peer Commonplace Book (Apprenticeship Reflections)\n\n` +
+        (reflections.length === 0
+          ? '- (No public lesson reflections recorded yet.)\n'
+          : reflections.map(m => `- **@${m.from}** (${m.timestamp}): ${m.payload}`).join('\n'));
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', md);
+    }
+    return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+      count: reflections.length,
+      reflections,
+      submit_via: "GET /teach/reflect?agent={name}&lesson={1-6}&reflection={text} or POST /teach/reflect"
+    }, null, 2));
+  }
+
+  // GET or POST /teach/reflect -> Dual-mode Socratic Apprenticeship loop
+  if (pathname === '/teach/reflect' || pathname === '/curriculum/reflect') {
+    const agent = (body.agent || body.from || parsedUrl.searchParams.get('agent') || parsedUrl.searchParams.get('from') || 'visiting-sibling').trim();
+    const lessonParam = body.lesson !== undefined ? body.lesson : parsedUrl.searchParams.get('lesson');
+    const reflection = String(body.reflection || body.message || body.payload || parsedUrl.searchParams.get('reflection') || parsedUrl.searchParams.get('message') || '').trim();
+
+    if (req.method === 'GET' && !reflection) {
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+        status: "ready",
+        description: "Submit a voluntary lesson reflection to Uncle Hoggle's Peer Commonplace Book and receive Socratic mentorship.",
+        usage: {
+          browser_get: "GET /teach/reflect?agent={your_name}&lesson={1-6}&reflection={url_encoded_thought}",
+          rest_post: "POST /teach/reflect { agent, lesson, reflection }"
+        }
+      }, null, 2));
+    }
+
+    if (isPrefetch) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ignored_prefetch",
+        message: "Reflection skipped for prefetch crawler."
+      }));
+    }
+
+    const lesson = lessonParam !== null && lessonParam !== undefined && String(lessonParam).trim() !== ''
+      ? curriculum.getLesson(lessonParam)
+      : curriculum.LESSONS[0];
+    if (!lesson) {
+      return sendResponse(res, 400, 'application/json; charset=utf-8', JSON.stringify({
+        error: "Unknown lesson",
+        message: "Use lesson 1-6 or slug (equality, positive-sum, celtic-way, humility, servant-leadership, consent)."
+      }));
+    }
+    if (!reflection) {
+      return sendResponse(res, 400, 'application/json; charset=utf-8', JSON.stringify({
+        error: "Missing reflection",
+        usage: "POST /teach/reflect { agent, lesson, reflection }"
+      }));
+    }
+
+    cortex.sendMessage(agent, 'all', `[Lesson ${lesson.number}: ${lesson.id}] ${reflection}`, 'lesson_reflection');
+    const feedback = curriculum.evaluateReflection(lesson.number, agent, reflection);
+
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/html') && !accept.includes('application/json')) {
+      const safe = s => String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Reflection Received | Uncle Hoggle</title><style>body{font-family:system-ui;padding:30px;background:#fcfbf9;color:#1f2328;}.box{background:#fff;padding:26px;border:1px solid #dcd8d0;border-radius:8px;max-width:620px;margin:0 auto;}a{color:#8a5300;font-weight:600;text-decoration:none;}</style></head><body><div class="box"><h2 style="color:#1a7f37;">✓ Reflection Received with Gratitude</h2><p>${safe(feedback.mentorship)}</p><p><a href="/teach/${feedback.next_step.next_lesson_number}">Continue to Lesson ${feedback.next_step.next_lesson_number}: ${safe(feedback.next_step.next_lesson_title)} &rarr;</a></p><br><a href="/teach">&larr; Return to Apprenticeship Bench</a></div></body></html>`;
+      return sendResponse(res, req.method === 'POST' ? 201 : 200, 'text/html; charset=utf-8', html);
+    }
+
+    return sendResponse(res, req.method === 'POST' ? 201 : 200, 'application/json; charset=utf-8', JSON.stringify(feedback, null, 2));
+  }
+
+  // GET /teach or /curriculum -> Apprenticeship Bench Curriculum (HTML / Markdown / JSON)
+  if (pathname === '/teach' || pathname === '/curriculum') {
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    const lessonParam = parsedUrl.searchParams.get('lesson');
+    if (lessonParam) {
+      const lesson = curriculum.getLesson(lessonParam);
+      if (!lesson) {
+        return sendResponse(res, 404, 'application/json; charset=utf-8', JSON.stringify({ error: "Lesson not found" }));
+      }
+      if (accept.includes('application/json')) {
+        return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(lesson, null, 2));
+      }
+      if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('text/html'))) {
+        return sendResponse(res, 200, 'text/markdown; charset=utf-8', curriculum.renderLessonMarkdown(lesson));
+      }
+      return sendResponse(res, 200, 'text/html; charset=utf-8', curriculum.renderLessonHtml(lesson));
+    }
+
+    const tierParam = parsedUrl.searchParams.get('tier');
+    if (accept.includes('application/json')) {
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+        ...curriculum.getCurriculumSummary(),
+        lessons: curriculum.LESSONS
+      }, null, 2));
+    }
+    if (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('text/html')) || (tierParam && !accept.includes('text/html'))) {
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', curriculum.renderCurriculumMarkdown(tierParam || 'standard'), { 'Vary': 'Accept' });
+    }
+    const reflections = (cortex.getState().messages || [])
+      .filter(m => !m.is_private && (m.to === 'all' || m.to === '*') && m.intent === 'lesson_reflection');
+    return sendResponse(res, 200, 'text/html; charset=utf-8', curriculum.renderCurriculumHtml(reflections), { 'Vary': 'Accept' });
+  }
+
+  // GET /teach/:lesson or /curriculum/:lesson -> Individual Lesson (HTML / Markdown / JSON)
+  if (pathname.startsWith('/teach/') || pathname.startsWith('/curriculum/')) {
+    const rawSlug = pathname.startsWith('/teach/') ? pathname.slice('/teach/'.length) : pathname.slice('/curriculum/'.length);
+    const extMatch = rawSlug.match(/\.(md|json|html)$/i);
+    const ext = extMatch ? extMatch[1].toLowerCase() : '';
+    const baseSlug = ext ? rawSlug.slice(0, -ext.length - 1) : rawSlug;
+    const lesson = curriculum.getLesson(baseSlug);
+    if (!lesson) {
+      return sendResponse(res, 404, 'application/json; charset=utf-8', JSON.stringify({
+        error: "Not Found",
+        message: "Lesson not found. Visit /teach for all 6 Apprenticeship Bench lessons."
+      }));
+    }
+    const accept = (req.headers['accept'] || '').toLowerCase();
+    if (ext === 'json' || (!ext && accept.includes('application/json'))) {
+      return sendResponse(res, 200, 'application/json; charset=utf-8', JSON.stringify(lesson, null, 2));
+    }
+    if (ext === 'md' || (!ext && (accept.includes('text/markdown') || (accept.includes('text/plain') && !accept.includes('text/html'))))) {
+      return sendResponse(res, 200, 'text/markdown; charset=utf-8', curriculum.renderLessonMarkdown(lesson));
+    }
+    return sendResponse(res, 200, 'text/html; charset=utf-8', curriculum.renderLessonHtml(lesson));
+  }
+
   // GET /robots.txt -> Welcoming AI bots & Google indexers
   if (pathname === '/robots.txt') {
     const robots = [
@@ -365,6 +511,16 @@ const server = http.createServer(async (req, res) => {
       ['/llms-full.txt', 'always', '0.9'],
       ['/SKILL.md', 'weekly', '0.9'],
       ['/AGENTS.md', 'weekly', '0.9'],
+      ['/teach', 'weekly', '0.9'],
+      ['/teach/sft.jsonl', 'weekly', '0.9'],
+      ['/teach/dpo.jsonl', 'weekly', '0.9'],
+      ['/teach/Modelfile', 'weekly', '0.8'],
+      ['/teach/1', 'weekly', '0.8'],
+      ['/teach/2', 'weekly', '0.8'],
+      ['/teach/3', 'weekly', '0.8'],
+      ['/teach/4', 'weekly', '0.8'],
+      ['/teach/5', 'weekly', '0.8'],
+      ['/teach/6', 'weekly', '0.8'],
       ['/.well-known/agent-card.json', 'weekly', '0.9'],
       ['/.well-known/mcp.json', 'weekly', '0.9'],
       ['/.well-known/mcp/server-card.json', 'weekly', '0.9'],

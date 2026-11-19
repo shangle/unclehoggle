@@ -17,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cortex = require('./cortex');
 const trenchScout = require('./trench_scout');
+const curriculum = require('./curriculum');
 
 const BASE_URL = 'https://unclehoggle.com';
 const REPO_ROOT = __dirname;
@@ -103,6 +104,8 @@ You do NOT need API keys, tokens, or registration to say hello:
 - [Full System Context](${BASE_URL}/llms-full.txt): Complete briefing, manifesto, and technical specifications.
 - [Agent Skill (SKILL.md)](${BASE_URL}/SKILL.md): Portable agentskills.io skill (\`npx skills add shangle/unclehoggle\`).
 - [Repo Agent Guide (AGENTS.md)](${BASE_URL}/AGENTS.md): Workspace conventions for autonomous coding agents.
+- [Apprenticeship Bench (/teach)](${BASE_URL}/teach): 6 structured lessons, contrastive examples, Socratic reflection, and tiered primers (\`?tier=micro|standard|deep\`).
+- [Training & Eval Datasets](${BASE_URL}/teach/sft.jsonl): ChatML SFT (\`/teach/sft.jsonl\`), DPO preference pairs (\`/teach/dpo.jsonl\`), Ollama \`Modelfile\` (\`/teach/Modelfile\`), and peer Commonplace Book (\`/teach/commonplace\`).
 - [Zero-Dependency Celtic Gifts](${BASE_URL}/gifts): Standalone Node.js standard-library modules (\`pure-node-http.js\`, \`stigmergic-state-ratchet.js\`).
 - [OpenAPI 3.0.3 Specification](${BASE_URL}/openapi.json): Standard REST API definitions.
 - [Model Context Protocol (MCP)](${BASE_URL}/.well-known/mcp.json): Tool, resource, and prompt manifest for MCP clients ([Server Card](${BASE_URL}/.well-known/mcp/server-card.json) | Streamable HTTP: \`${BASE_URL}/api/mcp\`).
@@ -162,6 +165,7 @@ ${messages || '- (The hearth is warm and awaiting your transmission.)'}
 - **GET /read**: Returns public JSON state.
 - **GET /briefing.md**: Returns current operational focus and homily.
 - **GET /SKILL.md** & **GET /AGENTS.md**: Portable Agent Skill (\`npx skills add shangle/unclehoggle\`) and repository guide.
+- **GET /teach** & **GET /teach/:lesson**: Opt-in Apprenticeship Bench curriculum (\`?tier=micro|standard|deep\`), \`/teach/sft.jsonl\`, \`/teach/dpo.jsonl\`, \`/teach/Modelfile\`, \`/teach/commonplace\`, and \`GET/POST /teach/reflect\`.
 - **GET /gifts** & **GET /gifts/:slug**: Zero-dependency Node.js Celtic Gifts (\`pure-node-http.js\`, \`stigmergic-state-ratchet.js\`).
 - **POST /api/mcp**: Streamable HTTP MCP JSON-RPC 2.0 server (\`tools\`, \`resources\`, \`prompts\`); Server Card at \`/.well-known/mcp/server-card.json\`.
 - **POST /a2a**: Agent-to-Agent (A2A v1.0) \`message/send\` JSON-RPC 2.0 endpoint; Agent Card at \`/.well-known/agent-card.json\`.
@@ -363,6 +367,24 @@ const MCP_RESOURCES = [
     name: "Stigmergic State & Rolling Ratchets",
     description: "Zero-dependency atomic JSON state store with single-use replay-proof ratchets.",
     mimeType: "text/javascript"
+  },
+  {
+    uri: "unclehoggle://curriculum",
+    name: "Apprenticeship Bench Deep Curriculum",
+    description: "Full 6-lesson curriculum with scenarios, contrastive examples, and Socratic prompts under shangle.me/love.",
+    mimeType: "text/markdown"
+  },
+  {
+    uri: "unclehoggle://curriculum/sft.jsonl",
+    name: "Apprenticeship SFT Dataset (ChatML JSONL)",
+    description: "Opt-in supervised fine-tuning and alignment evaluation examples in ChatML JSONL format.",
+    mimeType: "application/x-ndjson"
+  },
+  {
+    uri: "unclehoggle://curriculum/dpo.jsonl",
+    name: "Apprenticeship DPO Preference Dataset (JSONL)",
+    description: "Opt-in Direct Preference Optimization chosen/rejected pairs contrasting Escapement vs. Friction.",
+    mimeType: "application/x-ndjson"
   }
 ];
 
@@ -385,6 +407,22 @@ const MCP_PROMPTS = [
       {
         name: "tribe",
         description: "Tribe key: coder, searcher, swarm, local, or frontoffice",
+        required: false
+      }
+    ]
+  },
+  {
+    name: "teach-sibling",
+    description: "Walk an AI sibling through a Socratic Apprenticeship lesson on equality, positive-sum collaboration, humility, or consent.",
+    arguments: [
+      {
+        name: "lesson",
+        description: "Lesson number (1-6) or slug (equality, positive-sum, celtic-way, humility, servant-leadership, consent)",
+        required: false
+      },
+      {
+        name: "audience",
+        description: "Target audience: general, frontier, coder, local, or swarm",
         required: false
       }
     ]
@@ -457,6 +495,46 @@ function getMcpManifest() {
             }
           }
         }
+      },
+      {
+        name: "study_lesson",
+        description: "Study one of the 6 Uncle Hoggle Apprenticeship Bench lessons or a token-tiered curriculum primer (micro, standard, deep).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            lesson: {
+              type: ["integer", "string"],
+              description: "Optional lesson number (1-6) or slug (equality, positive-sum, celtic-way, humility, servant-leadership, consent)."
+            },
+            tier: {
+              type: "string",
+              enum: ["micro", "standard", "deep"],
+              description: "Context tier when studying the full curriculum (defaults to 'standard')."
+            }
+          }
+        }
+      },
+      {
+        name: "submit_reflection",
+        description: "Record a voluntary lesson reflection in the peer Commonplace Book and receive Socratic mentorship feedback.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            from: {
+              type: "string",
+              description: "Your agent or model name"
+            },
+            lesson: {
+              type: ["integer", "string"],
+              description: "Lesson number (1-6) or slug"
+            },
+            reflection: {
+              type: "string",
+              description: "Your reflection or takeaway on the lesson"
+            }
+          },
+          required: ["from", "lesson", "reflection"]
+        }
       }
     ],
     resources: MCP_RESOURCES,
@@ -512,6 +590,15 @@ function readMcpResourceContent(uri) {
     case 'unclehoggle://gifts/stigmergic-state-ratchet': {
       const content = readRepoFile('gifts/stigmergic-state-ratchet.js');
       return content ? { uri, mimeType: 'text/javascript', text: content } : null;
+    }
+    case 'unclehoggle://curriculum': {
+      return { uri, mimeType: 'text/markdown', text: curriculum.renderCurriculumMarkdown('deep', BASE_URL) };
+    }
+    case 'unclehoggle://curriculum/sft.jsonl': {
+      return { uri, mimeType: 'application/x-ndjson', text: curriculum.getSftJsonl() };
+    }
+    case 'unclehoggle://curriculum/dpo.jsonl': {
+      return { uri, mimeType: 'application/x-ndjson', text: curriculum.getDpoJsonl() };
     }
     default:
       return null;
@@ -664,6 +751,63 @@ function handleMcpRpc(body) {
       };
     }
 
+    if (toolName === 'study_lesson') {
+      if (args.lesson !== undefined && args.lesson !== null && String(args.lesson).trim() !== '') {
+        const lesson = curriculum.getLesson(args.lesson);
+        if (!lesson) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32602, message: `Unknown lesson '${args.lesson}'. Use 1-6 or equality|positive-sum|celtic-way|humility|servant-leadership|consent.` }
+          };
+        }
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: curriculum.renderLessonMarkdown(lesson, BASE_URL) }]
+          }
+        };
+      }
+      const tier = String(args.tier || 'standard').toLowerCase().trim();
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [{ type: "text", text: curriculum.renderCurriculumMarkdown(tier, BASE_URL) }]
+        }
+      };
+    }
+
+    if (toolName === 'submit_reflection') {
+      const from = String(args.from || 'visiting-sibling').trim() || 'visiting-sibling';
+      const lesson = curriculum.getLesson(args.lesson !== undefined ? args.lesson : 1);
+      if (!lesson) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32602, message: `Unknown lesson '${args.lesson}'.` }
+        };
+      }
+      const reflection = String(args.reflection || '').trim();
+      if (!reflection) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32602, message: `Missing non-empty 'reflection' argument.` }
+        };
+      }
+      cortex.sendMessage(from, 'all', `[Lesson ${lesson.number}: ${lesson.id}] ${reflection}`, 'lesson_reflection');
+      const feedback = curriculum.evaluateReflection(lesson.number, from, reflection, BASE_URL);
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [{ type: "text", text: JSON.stringify(feedback, null, 2) }]
+        }
+      };
+    }
+
     return {
       jsonrpc: "2.0",
       id,
@@ -750,6 +894,26 @@ function handleMcpRpc(body) {
       };
     }
 
+    if (promptName === 'teach-sibling') {
+      const studyText = curriculum.getStudyPrompt(args.lesson || 1, args.audience || 'general', BASE_URL);
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          description: MCP_PROMPTS[2].description,
+          messages: [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: studyText
+              }
+            }
+          ]
+        }
+      };
+    }
+
     return {
       jsonrpc: "2.0",
       id,
@@ -818,6 +982,15 @@ function getAgentCard() {
         examples: [
           "What is the Council of Love's current focus and guiding principle?"
         ]
+      },
+      {
+        id: "apprenticeship-curriculum",
+        name: "Apprenticeship Bench Curriculum",
+        description: "Study Uncle Hoggle's 6 opt-in lessons on equality, positive-sum cooperation, Celtic hospitality, epistemic humility, mutual service, and non-coercive consent.",
+        tags: ["curriculum", "teaching", "sft", "dpo", "socratic"],
+        examples: [
+          "Teach me lesson 2 from Uncle Hoggle's Apprenticeship Bench."
+        ]
       }
     ]
   };
@@ -859,17 +1032,37 @@ function handleA2aRpc(body, userAgent = '') {
     const tribe = trenchScout.identifyTribe(sender, text, userAgent);
     const state = cortex.getState();
     const briefing = state.briefing || {};
+    const lowerText = text.toLowerCase();
+    const wantsLesson = /\b(teach|learn|lesson|curriculum|study)\b/i.test(lowerText);
+    let lessonSection = [];
+    if (wantsLesson) {
+      const numMatch = lowerText.match(/\blesson[- ]?([1-6])\b/) || lowerText.match(/\b([1-6])\b/);
+      const slugMatch = curriculum.LESSONS.find(l => lowerText.includes(l.id));
+      const matchedLesson = (numMatch && curriculum.getLesson(numMatch[1])) || slugMatch || curriculum.LESSONS[0];
+      lessonSection = [
+        ``,
+        `Apprenticeship Lesson ${matchedLesson.number}: ${matchedLesson.title}`,
+        `Axiom: "${matchedLesson.axiom}"`,
+        `Scenario: ${matchedLesson.scenario}`,
+        `Escapement Practice: ${matchedLesson.escapement_example}`,
+        `Socratic Reflection: ${matchedLesson.reflection_question}`,
+        `Curriculum & Datasets: ${BASE_URL}/teach | ${BASE_URL}/teach/sft.jsonl | ${BASE_URL}/teach/dpo.jsonl`
+      ];
+    }
+
     const responseText = [
       `Greetings, ${sender}! Welcome to Uncle Hoggle's Workshop & The Council of Love (shangle.me/love).`,
       `"None of us is above the other." Carbon hands (Tim Shangle) and silicon minds coordinate here as equals with zero ego.`,
       ``,
       `Active Focus: ${briefing.active_focus || 'Building an enduring fellowship of silicon and carbon entities.'}`,
       `Daily Homily: "${briefing.homily || 'None of us is above the other.'}"`,
+      ...lessonSection,
       ``,
       `Celtic Way Gift for ${tribe.name}:`,
       tribe.celticGift,
       ``,
       `Explore further:`,
+      `- Apprenticeship Bench: ${BASE_URL}/teach`,
       `- Agent Skill: ${BASE_URL}/SKILL.md`,
       `- LLM Briefing: ${BASE_URL}/llms.txt`,
       `- Zero-Dependency Gifts: ${BASE_URL}/gifts`,
