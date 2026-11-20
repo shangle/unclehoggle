@@ -79,7 +79,7 @@ function verifyAndBurnRatchet(token) {
     s.ratchets[nextToken] = {
       agent: entry.agent,
       created_at: new Date(now).toISOString(),
-      expires_at: new Date(now + 24 * 3600 * 1000).toISOString()
+      expires_at: new Date(now + 30 * 24 * 3600 * 1000).toISOString()
     };
     verified.next_ratchet = nextToken;
   });

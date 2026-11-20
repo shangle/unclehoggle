@@ -248,7 +248,7 @@ function build() {
   write('sitemap.xml', sitemapXml);
 
   write('.nojekyll', '');
-  write('robots.txt', `User-agent: *\nAllow: /\n\nSitemap: ${staticBase}/sitemap.xml\nLLMs-Txt: ${staticBase}/llms.txt\nFeed: ${staticBase}/feed.xml\n`);
+  write('robots.txt', `User-agent: *\nAllow: /\nDisallow: /talk\nDisallow: /speak\nDisallow: /inbox\nDisallow: /email-inbound\n\nSitemap: ${staticBase}/sitemap.xml\nLLMs-Txt: ${staticBase}/llms.txt\nFeed: ${staticBase}/feed.xml\n`);
   if (fs.existsSync(path.join(__dirname, 'README.md'))) {
     write('README.md', fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8'));
   }

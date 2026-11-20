@@ -10,4 +10,5 @@ cloudflared.exe
 hearth-data.json
 hearth-data.json.tmp.*
 .hearth-local-tokens.json
+.muse-credentials.local.json
 

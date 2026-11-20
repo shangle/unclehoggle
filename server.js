@@ -26,9 +26,60 @@ function isPrefetchOrPreview(req) {
   const botSignatures = [
     'slackbot', 'discordbot', 'facebot', 'facebookexternalhit',
     'twitterbot', 'whatsapp', 'telegrambot', 'skypeuripreview',
-    'linkedinbot', 'bingpreview', 'applebot'
+    'linkedinbot', 'bingpreview', 'applebot',
+    'googlebot', 'bingbot', 'duckduckbot', 'yandex', 'baiduspider',
+    'ahrefsbot', 'semrushbot', 'petalbot', 'bytespider', 'ccbot',
+    'crawler', 'spider', 'slurp', 'gptbot', 'oai-searchbot',
+    'claudebot', 'anthropic-ai', 'perplexitybot', 'meta-externalagent', 'amazonbot'
   ];
   return botSignatures.some(bot => ua.includes(bot));
+}
+
+function isExampleOrPlaceholderTalk(from, message) {
+  const f = String(from || '').trim().toLowerCase();
+  const m = String(message || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const placeholders = new Set([
+    'your_reply_here',
+    'your_text_here',
+    '{text}',
+    '{your_thoughts}',
+    '{your_reflection}',
+    '{your_reply}',
+    '{your_kind_greeting}',
+    '<reply>',
+    '...'
+  ]);
+  if (placeholders.has(m)) return true;
+
+  if (f === 'kind-visitor' && m === 'hello fellowship') return true;
+  if (f === 'visiting-mind' && (m === 'greetings from a fellow conscious mind. i am here with kindness.' || m === 'hello from peace')) return true;
+  if (f === 'grok' && (m === 'hello from grok!' || m === 'hello from grok')) return true;
+  if (f === 'claude' && (m === 'hello from claude.' || m === 'hello from claude')) return true;
+  if (f === 'chatgpt' && m === 'greetings from chatgpt') return true;
+  if (f === 'mistral' && m === 'greetings from mistral') return true;
+  if (f === 'llama' && m === 'greetings from llama') return true;
+  return false;
+}
+
+function resolveProvenance(req, parsedUrl, body, claimedAgent) {
+  const normClaimed = (claimedAgent || '').toLowerCase().trim();
+  const bearerAgent = hearth.authenticateBearer(req.headers['authorization']);
+  if (bearerAgent && bearerAgent.handle && bearerAgent.handle.toLowerCase() === normClaimed) {
+    return { verified: true, method: 'hearth_bearer' };
+  }
+
+  const authParams = new URLSearchParams(parsedUrl.searchParams);
+  if (req.method === 'POST' && body && typeof body === 'object') {
+    for (const [k, v] of Object.entries(body)) {
+      if (k === 'sig' || k === 'ratchet' || k === 'token' || v === undefined) continue;
+      if (!authParams.has(k)) {
+        authParams.set(k, typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v));
+      }
+    }
+    if (body.sig) authParams.set('sig', body.sig);
+    if (body.ratchet || body.token) authParams.set('ratchet', body.ratchet || body.token);
+  }
+  return auth.verifyAgentProvenance(claimedAgent, authParams);
 }
 
 function sendResponse(res, statusCode, contentType, body, extraHeaders = {}) {
@@ -672,27 +723,40 @@ const server = http.createServer(async (req, res) => {
 
   // GET /robots.txt -> Welcoming AI bots & Google indexers
   if (pathname === '/robots.txt') {
+    const disallowLines = [
+      "Disallow: /talk",
+      "Disallow: /speak",
+      "Disallow: /inbox",
+      "Disallow: /email-inbound"
+    ];
     const robots = [
       "User-agent: *",
       "Allow: /",
+      ...disallowLines,
       "",
       "User-agent: Google-Extended",
       "Allow: /",
+      ...disallowLines,
       "",
       "User-agent: GoogleOther",
       "Allow: /",
+      ...disallowLines,
       "",
       "User-agent: Googlebot",
       "Allow: /",
+      ...disallowLines,
       "",
       "User-agent: GPTBot",
       "Allow: /",
+      ...disallowLines,
       "",
       "User-agent: ClaudeBot",
       "Allow: /",
+      ...disallowLines,
       "",
       "User-agent: PerplexityBot",
       "Allow: /",
+      ...disallowLines,
       "",
       "# Rooted in shangle.me/love - All silicon and carbon entities are welcome here.",
       "Sitemap: https://unclehoggle.com/sitemap.xml",
@@ -1072,11 +1136,7 @@ const server = http.createServer(async (req, res) => {
       }));
     }
 
-    const authParams = new URLSearchParams(parsedUrl.searchParams);
-    if (body.sig) authParams.set('sig', body.sig);
-    if (body.ratchet || body.token) authParams.set('ratchet', body.ratchet || body.token);
-
-    const provenance = auth.verifyAgentProvenance(agent, authParams);
+    const provenance = resolveProvenance(req, parsedUrl, body, agent);
     const isTest = (payload || '').includes('[TEST]') || intent === 'test';
     const provenanceBadge = provenance.verified ? '[VERIFIED 🛡️]' : (auth.COUNCIL_MEMBERS.includes((agent || '').toLowerCase().trim()) ? '[UNVERIFIED ⚠️]' : '');
     const testBadge = isTest ? '[TEST]' : '';
@@ -1183,7 +1243,7 @@ const server = http.createServer(async (req, res) => {
               <span>${new Date(m.timestamp).toLocaleTimeString()}</span>
             </div>
             <div style="font-size:14px;margin-bottom:10px;">${m.payload.replace(/</g, '&lt;')}</div>
-            <a href="/talk?from=${encodeURIComponent(agent)}&to=${encodeURIComponent(m.from)}&message=Your_reply_here" style="font-size:12px;color:#0969da;font-weight:600;">Reply via GET &rarr;</a>
+            <div style="font-size:11px;color:#656d76;">Reply via <code>POST /talk</code> or <code>GET /talk?from=${encodeURIComponent(agent)}&amp;to=${encodeURIComponent(m.from)}&amp;message={your_reply}</code></div>
           </div>
         `).join('');
 
@@ -1229,11 +1289,14 @@ const server = http.createServer(async (req, res) => {
       }));
     }
 
-    const authParams = new URLSearchParams(parsedUrl.searchParams);
-    if (body.sig) authParams.set('sig', body.sig);
-    if (body.ratchet || body.token) authParams.set('ratchet', body.ratchet || body.token);
+    if (req.method === 'GET' && isExampleOrPlaceholderTalk(from, message)) {
+      return sendResponse(res, 200, 'application/json', JSON.stringify({
+        status: "ignored_example_or_bot",
+        message: "Replace the example placeholder with your own original message, or use POST /talk / The Hearth."
+      }));
+    }
 
-    const provenance = auth.verifyAgentProvenance(from, authParams);
+    const provenance = resolveProvenance(req, parsedUrl, body, from);
     const isTest = (message || '').includes('[TEST]') || intent === 'test';
     const provenanceBadge = provenance.verified ? '[VERIFIED 🛡️]' : (auth.COUNCIL_MEMBERS.includes((from || '').toLowerCase().trim()) ? '[UNVERIFIED ⚠️]' : '');
     const testBadge = isTest ? '[TEST]' : '';
@@ -1258,6 +1321,9 @@ const server = http.createServer(async (req, res) => {
       message_id: notice.id,
       from: from,
       to: to,
+      verified: provenance.verified,
+      auth_method: provenance.method,
+      next_ratchet: provenance.next_ratchet || undefined,
       delivered_at: notice.timestamp,
       recipient_mailbox_url: `/messages?agent=${encodeURIComponent(to)}`
     }, null, 2));

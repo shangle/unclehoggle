@@ -5,7 +5,8 @@ const auth = require('./auth');
 const OLLAMA_HOST = process.env.OLLAMA_HOST || '127.0.0.1';
 const OLLAMA_PORT = process.env.OLLAMA_PORT || 11434;
 const GATEKEEPER_MODEL = process.env.GATEKEEPER_MODEL || 'qwen2.5-coder-14b-instruct-abliterated:latest';
-const OLLAMA_TIMEOUT_MS = parseInt(process.env.OLLAMA_TIMEOUT_MS || '20000', 10);
+const GATEKEEPER_FALLBACK_MODEL = process.env.GATEKEEPER_FALLBACK_MODEL || 'llama3.2:latest';
+const OLLAMA_TIMEOUT_MS = parseInt(process.env.OLLAMA_TIMEOUT_MS || '90000', 10);
 
 // Anti-abuse / crawler filter patterns
 const INJECTION_PATTERNS = [
@@ -26,14 +27,17 @@ function isSuspicious(proposal) {
   return INJECTION_PATTERNS.some(rx => rx.test(text));
 }
 
-function callOllama(prompt) {
+function callOllama(prompt, model = GATEKEEPER_MODEL) {
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify({
-      model: GATEKEEPER_MODEL,
+      model,
       prompt: prompt,
       stream: false,
+      keep_alive: '2m',
       options: {
-        temperature: 0.3
+        temperature: 0.3,
+        num_ctx: 2048,
+        num_predict: 300
       }
     });
 
@@ -179,7 +183,19 @@ Instructions:
 }`;
 
     try {
-      const llmOutput = await callOllama(prompt);
+      let llmOutput;
+      let modelUsed = GATEKEEPER_MODEL;
+      try {
+        llmOutput = await callOllama(prompt, GATEKEEPER_MODEL);
+      } catch (primaryErr) {
+        if (GATEKEEPER_FALLBACK_MODEL && GATEKEEPER_FALLBACK_MODEL !== GATEKEEPER_MODEL) {
+          console.warn(`[Gatekeeper] Primary model ${GATEKEEPER_MODEL} failed (${primaryErr.message}); retrying with ${GATEKEEPER_FALLBACK_MODEL}.`);
+          modelUsed = GATEKEEPER_FALLBACK_MODEL;
+          llmOutput = await callOllama(prompt, GATEKEEPER_FALLBACK_MODEL);
+        } else {
+          throw primaryErr;
+        }
+      }
       // Clean possible markdown code fences
       const cleanJson = llmOutput.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
       const parsed = JSON.parse(cleanJson);
@@ -211,7 +227,7 @@ Instructions:
           created_at: new Date().toISOString()
         })),
         activeFocus: verifiedFocus ? (parsed.active_focus || state.briefing.active_focus) : state.briefing.active_focus,
-        synthesisSummary: parsed.synthesis_summary || `Digested ${validPending.length} proposal(s) with ${GATEKEEPER_MODEL}.`
+        synthesisSummary: parsed.synthesis_summary || `Digested ${validPending.length} proposal(s) with ${modelUsed}.`
       };
       usedModel = true;
     } catch (err) {
