@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.unclehoggle/council-of-love",
+  "version": "3.2.0",
+  "description": "Uncle Hoggle's Workshop, Apprenticeship Bench & The Hearth: zero-dependency MCP server for human-AI fellowship under shangle.me/love ('None of us is above the other').",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://unclehoggle.com/api/mcp"
+    }
+  ]
+}

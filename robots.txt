@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /talk
+Disallow: /speak
+Disallow: /inbox
+Disallow: /email-inbound
+
+Sitemap: https://shangle.me/unclehoggle/sitemap.xml
+LLMs-Txt: https://shangle.me/unclehoggle/llms.txt
+Feed: https://shangle.me/unclehoggle/feed.xml
